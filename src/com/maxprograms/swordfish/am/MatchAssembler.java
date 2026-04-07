@@ -231,7 +231,7 @@ public class MatchAssembler {
         return result;
     }
 
-    private static Element buildElement(String string) throws SAXException, IOException, ParserConfigurationException {
+    private static synchronized Element buildElement(String string) throws SAXException, IOException, ParserConfigurationException {
         if (builder == null) {
             builder = new SAXBuilder();
         }

@@ -58,7 +58,7 @@ public class TuDatabase {
 		tumap.put(tuid.hashCode(), tu);
 	}
 
-	public Element getTu(String tuid) {
+	public synchronized Element getTu(String tuid) {
 		Element result = tumap.get(tuid.hashCode());
 		if (result == null) {
 			result = new Element("tu");

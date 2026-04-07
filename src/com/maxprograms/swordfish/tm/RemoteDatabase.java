@@ -432,7 +432,7 @@ public class RemoteDatabase implements ITmEngine {
         return new Match(id, source, target, similarity, origin, properties);
     }
 
-    private Element toElement(String string) throws SAXException, IOException, ParserConfigurationException {
+    private synchronized Element toElement(String string) throws SAXException, IOException, ParserConfigurationException {
         return builder.build(new ByteArrayInputStream(string.getBytes(StandardCharsets.UTF_8))).getRootElement();
     }
 

@@ -598,17 +598,19 @@ public class SqliteDatabase implements ITmEngine {
             stmt.setInt(3, minLength);
             stmt.setInt(4, maxLength);
 
-            NavigableSet<Fun.Tuple2<Integer, String>> index = fuzzyIndex.getIndex(srcLang);
-            for (int i = 0; i < ngrams.length; i++) {
-                Iterable<String> keys = Fun.filter(index, ngrams[i]);
-                Iterator<String> it = keys.iterator();
-                while (it.hasNext()) {
-                    String tuid = it.next();
-                    if (candidates.containsKey(tuid)) {
-                        int count = candidates.get(tuid);
-                        candidates.put(tuid, count + 1);
-                    } else {
-                        candidates.put(tuid, 1);
+            synchronized (fuzzyIndex) {
+                NavigableSet<Fun.Tuple2<Integer, String>> index = fuzzyIndex.getIndex(srcLang);
+                for (int i = 0; i < ngrams.length; i++) {
+                    Iterable<String> keys = Fun.filter(index, ngrams[i]);
+                    Iterator<String> it = keys.iterator();
+                    while (it.hasNext()) {
+                        String tuid = it.next();
+                        if (candidates.containsKey(tuid)) {
+                            int count = candidates.get(tuid);
+                            candidates.put(tuid, count + 1);
+                        } else {
+                            candidates.put(tuid, 1);
+                        }
                     }
                 }
             }
@@ -681,17 +683,19 @@ public class SqliteDatabase implements ITmEngine {
                     .prepareStatement("SELECT lang, seg FROM tuv WHERE tuid=? AND lang=?")) {
                 stmt2.setString(2, tgtLang);
 
-                NavigableSet<Fun.Tuple2<Integer, String>> index = fuzzyIndex.getIndex(srcLang);
-                for (int i = 0; i < ngrams.length; i++) {
-                    Iterable<String> keys = Fun.filter(index, ngrams[i]);
-                    Iterator<String> it = keys.iterator();
-                    while (it.hasNext()) {
-                        String tuid = it.next();
-                        if (candidates.containsKey(tuid)) {
-                            int count = candidates.get(tuid);
-                            candidates.put(tuid, count + 1);
-                        } else {
-                            candidates.put(tuid, 1);
+                synchronized (fuzzyIndex) {
+                    NavigableSet<Fun.Tuple2<Integer, String>> index = fuzzyIndex.getIndex(srcLang);
+                    for (int i = 0; i < ngrams.length; i++) {
+                        Iterable<String> keys = Fun.filter(index, ngrams[i]);
+                        Iterator<String> it = keys.iterator();
+                        while (it.hasNext()) {
+                            String tuid = it.next();
+                            if (candidates.containsKey(tuid)) {
+                                int count = candidates.get(tuid);
+                                candidates.put(tuid, count + 1);
+                            } else {
+                                candidates.put(tuid, 1);
+                            }
                         }
                     }
                 }
