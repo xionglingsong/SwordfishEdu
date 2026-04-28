@@ -2,82 +2,107 @@
 
 ![Swordfish logo](images/icon.png)
 
-An advanced CAT (Computer Aided Translation) tool based on XLIFF Standard that supports MS Office, DITA, HTML and other document formats.
+Swordfish is a CAT (Computer-Aided Translation) tool built around XLIFF, providing a unified workflow to translate and manage multilingual content across multiple file formats.
 
-Swordfish uses TM (Translation Memory) and MT (Machine Translation). Supports segment filtering, terminology, customization and more.
+If your workflow revolves around XLIFF and interoperability between tools, Swordfish provides a consistent environment to manage translation end-to-end.
 
-## Swordfish Videos
+---
 
-- [Build Swordfish from Source Code](https://youtu.be/xiHFxfqCleQ)
-- [Translate a Segment Using the AI Prompt Dialog](https://youtu.be/8S420n2QieM)
-- [Translate a Segment Using the AI Menu or Keyboard Shortcuts](https://youtu.be/FwsFZCjUajU)
+## Typical workflow
 
-## Licenses
+1. Open or import files (or translation packages)
+2. Translate content using the built-in editor and translation tools
+3. Leverage Translation Memory and Machine Translation suggestions
+4. Export translated files or generate return packages
 
-Swordfish is available in two modes:
+---
 
-- Source Code
-- Yearly Subscriptions for installers and support
+## Why Swordfish
 
-### Source Code
+- Uses XLIFF as a core format for consistent and interoperable workflows
+- Integrates with other CAT tools and localization systems through XLIFF-based workflows
+- Supports multiple file formats through a unified translation process
+- Handles package-based workflows (e.g., Trados Studio)
 
-Anyone can download the source code, compile, modify and use it at no cost in compliance with the accompanying license terms. License information for all included components is available in the [licenses](licenses/README.md) directory.
+---
 
-You can subscribe to [Maxprograms Support](https://groups.io/g/maxprograms/) at Groups.io and request peer assistance for the source code version there.
+## Installation
 
-### Subscriptions
+Download ready-to-use installers (recommended for most users):
 
-The version of Swordfish included in the official installers from [Maxprograms Download Page](https://www.maxprograms.com/downloads/index.html) can be used at no cost for 30 days requesting a free Evaluation Key.
+👉 <https://www.maxprograms.com/downloads/index.html>
 
-Personal Subscription Keys are available in  [Maxprograms Online Store](https://www.maxprograms.com/store/buy.html).
+---
 
-Subscription Keys cannot be shared or transferred to different machines.
+## Building from source
 
-Installers may occasionally be updated before the corresponding source code changes appear in this repository. Source code updates are published later, once they are ready for release. This timing difference is expected and does not affect the availability or completeness of the open source code.
+### Requirements
 
-Subscription version includes unlimited email support at [tech@maxprograms.com](mailto:tech@maxprograms.com)
+- JDK 21 or newer (<https://adoptium.net/>)
+- Gradle 9.2.1 or newer (<https://gradle.org>)
+- Node.js 24.11.1 LTS or newer (<https://nodejs.org/>)
 
-### Differences sumary
+### Build steps
 
-Differences | Source Code | Subscription Based
------------ | :---------: | :-----------------:
-Ready To Use Installers | No | Yes
-Notarized macOS launcher | No | Yes
-Signed launcher and installer for Windows | No | Yes
-Restricted Features | None | None
-Technical Support | Peer support at [Groups.io](https://groups.io/g/maxprograms/) | - Direct email at [tech@maxprograms.com](mailto:tech@maxprograms.com)  <br> - Peer support at [Groups.io](https://groups.io/g/maxprograms/)
-
-## Related Projects
-
-- [RemoteTM](https://github.com/rmraya/RemoteTM)
-- [OpenXLIFF Filters](https://github.com/rmraya/OpenXLIFF)
-
-## Requirements
-
-- JDK 21 or newer is required for compiling and building. Get it from [Adoptium](https://adoptium.net/).
-- Gradle 9.2.1 or newer. Get it from [https://gradle.org](https://gradle.org)
-- Node.js 24.11.1 LTS or newer. Get it from [https://nodejs.org/](https://nodejs.org/)
-
-## Building
-
-- Checkout this repository.
-- Point your `JAVA_HOME` environment variable to JDK 21
-- Run `gradle` to compile the Java code
-- Run `npm install` to download and install NodeJS dependencies
-- Run `npm start` to launch Swordfish
-
-### Steps for building
-
-``` bash
-  git clone https://github.com/rmraya/Swordfish.git
-  cd Swordfish
-  gradle
-  npm install
-  npm start
+```bash
+git clone https://github.com/rmraya/Swordfish.git
+cd Swordfish
+gradle
+npm install
+npm start
 ```
 
-Compile once and then simply run `npm start` to start Swordfish.
+After the initial build, you can run:
+
+```bash
+npm start
+```
+
+to launch Swordfish.
+
+---
+
+## Videos
+
+- Build from source:  <https://youtu.be/xiHFxfqCleQ>
+- Translate using AI Prompt Dialog: <https://youtu.be/8S420n2QieM>
+- Translate using AI menu or shortcuts: <https://youtu.be/FwsFZCjUajU>
+
+---
+
+## Source code and subscriptions
+
+Swordfish source code is available on GitHub and can be downloaded, compiled, modified, and used free of charge.
+
+We offer subscriptions that include installers, technical support, bug fixes, and feature requests. Subscription fees support ongoing development and help maintain the quality and reliability of Swordfish.
+
+The version included in the official installers can be used with a free 30-day trial by requesting an evaluation key. After the trial period expires, a subscription is required.
+
+Subscription keys are available from the Maxprograms Online Store and cannot be shared or transferred between machines.
+
+Subscription version includes unlimited email support at [tech@maxprograms.com](mailto:tech@maxprograms.com).
+
+---
+
+## Differences summary
+
+| Differences | Source Code | Subscription Based |
+| ----------- | :---------: | :----------------: |
+| Ready-to-use installers | No | Yes |
+| Notarized macOS launcher | No | Yes |
+| Signed Windows installer | No | Yes |
+| Restricted features | None | None |
+| Technical support | Peer support at <https://groups.io/g/maxprograms/> | Email + peer support |
+
+---
+
+## Related projects
+
+- <https://github.com/rmraya/RemoteTM>
+- <https://github.com/rmraya/OpenXLIFF>
+
+---
 
 ## Legal
 
-License information for all included components is available in the [licenses](licenses/README.md) directory.
+License information for all included components is available in the `licenses` directory.
