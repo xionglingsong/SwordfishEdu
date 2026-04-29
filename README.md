@@ -45,7 +45,7 @@ Download ready-to-use installers (recommended for most users):
 ### Build steps
 
 ```bash
-git clone https://github.com/rmraya/Swordfish.git
+git clone https://github.com/maxprograms-com/Swordfish.git
 cd Swordfish
 gradle
 npm install
