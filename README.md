@@ -105,4 +105,4 @@ Subscription version includes unlimited email support at [tech@maxprograms.com](
 
 ## Legal
 
-License information for all included components is available in the `licenses` directory.
+License information for all included components is available in the [licenses](./licenses) directory.
