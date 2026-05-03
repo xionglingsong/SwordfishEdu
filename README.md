@@ -30,7 +30,7 @@ If your workflow revolves around XLIFF and interoperability between tools, Sword
 
 Download ready-to-use installers (recommended for most users):
 
-👉 <https://www.maxprograms.com/downloads/index.html>
+- <https://maxprograms.com/products/swfishdownload.html>
 
 ---
 
