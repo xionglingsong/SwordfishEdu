@@ -1,0 +1,24 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(xargs kill)",
+      "Bash(ELECTRON_RUN_AS_NODE= npx electron .)",
+      "Bash(curl -s -X POST http://127.0.0.1:8070/projects/count -H 'Content-Type: application/json' -d '{\"project\":\"1778477962264\"}')",
+      "Bash(curl -s -X POST http://127.0.0.1:8070/projects/list -H 'Content-Type: application/json' -d '{}')",
+      "Bash(curl -s -X POST http://127.0.0.1:8070/projects/get -H 'Content-Type: application/json' -d '{\"project\":\"1778477962264\"}')",
+      "Bash(python3 -c ' *)",
+      "Bash(pkill -f \"Swordfish\")",
+      "Bash(xxd \"/Users/lingsongxiong/Downloads/Worksheet.csv\")",
+      "Bash(xxd /Users/lingsongxiong/Downloads/Worksheet.csv)",
+      "Bash(node -e ' *)",
+      "Bash(xxd)",
+      "Bash(env -u ELECTRON_RUN_AS_NODE npx electron .)",
+      "Bash(echo \"App started, PID: $!\")",
+      "Bash(pkill -f \"electron .\")",
+      "Bash(pkill -f \"SwordfishEdu\")",
+      "Bash(git init *)",
+      "Bash(git remote *)",
+      "Bash(git add *)"
+    ]
+  }
+}

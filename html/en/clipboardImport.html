@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <title>Import from Clipboard</title>
+    <link id="theme" rel="stylesheet" type="text/css" href="../../css/light.css">
+    <link rel="stylesheet" type="text/css" href="../../css/fonts.css">
+    <style>
+        .pasteArea {
+            width: 100%;
+            min-height: 160px;
+            padding: 8px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            font-size: 13px;
+            line-height: 1.6;
+            resize: vertical;
+            font-family: inherit;
+            box-sizing: border-box;
+        }
+        .pasteArea:focus { outline: none; border-color: #2196F3; }
+        .hint { font-size: 11px; color: #888; margin-top: 4px; }
+    </style>
+</head>
+<body class="dialogBody">
+    <div class="paddedArea">
+        <table class="fill_width">
+            <tr>
+                <td class="middle noWrap"><label for="projectInput">Exercise Name</label></td>
+                <td class="fill_width middle" colspan="2">
+                    <input id="projectInput" class="table_input middle" autofocus>
+                </td>
+            </tr>
+            <tr>
+                <td class="middle noWrap"><label for="srcLangSelect">Source Language</label></td>
+                <td colspan="2">
+                    <select id="srcLangSelect" class="table_select">
+                        <option value="zh-CN" selected>Chinese (Simplified)</option>
+                        <option value="zh-TW">Chinese (Traditional)</option>
+                        <option value="en">English</option>
+                        <option value="ja">Japanese</option>
+                        <option value="ko">Korean</option>
+                        <option value="fr">French</option>
+                        <option value="de">German</option>
+                        <option value="es">Spanish</option>
+                    </select>
+                </td>
+            </tr>
+            <tr>
+                <td class="middle noWrap"><label for="tgtLangSelect">Target Language</label></td>
+                <td colspan="2">
+                    <select id="tgtLangSelect" class="table_select">
+                        <option value="en" selected>English</option>
+                        <option value="zh-CN">Chinese (Simplified)</option>
+                        <option value="zh-TW">Chinese (Traditional)</option>
+                        <option value="ja">Japanese</option>
+                        <option value="ko">Korean</option>
+                        <option value="fr">French</option>
+                        <option value="de">German</option>
+                        <option value="es">Spanish</option>
+                    </select>
+                </td>
+            </tr>
+        </table>
+        <div style="margin-top:8px;">
+            <div style="font-weight:bold; margin-bottom:4px;">Paste bilingual text:</div>
+            <textarea id="pasteArea" class="pasteArea" placeholder="Paste Chinese-English parallel text here. Each paragraph pair on a separate line..."></textarea>
+            <div class="hint">Each line: Chinese paragraph followed by English paragraph. Works with text from reciyi.com and similar sites.</div>
+        </div>
+        <div id="previewArea" style="display:none; margin-top:10px;">
+            <div style="font-weight:bold; margin-bottom:4px;">Preview (<span id="pairCount">0</span> pairs):</div>
+            <div style="max-height:200px; overflow-y:auto;">
+            <table id="previewTable" class="fill_width stripes" style="font-size:12px;">
+                <thead>
+                    <tr>
+                        <th>Source</th>
+                        <th>Reference</th>
+                    </tr>
+                </thead>
+                <tbody id="previewBody"></tbody>
+            </table>
+            </div>
+        </div>
+    </div>
+    <div class="buttonArea">
+        <button id="previewBtn" style="margin-right:8px;">Preview</button>
+        <button id="importBtn">Import Exercise</button>
+    </div>
+    <script>
+        const { ClipboardImport } = require('../../js/clipboardImport.js');
+        new ClipboardImport();
+    </script>
+</body>
+</html>

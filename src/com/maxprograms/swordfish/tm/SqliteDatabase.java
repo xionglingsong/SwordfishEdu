@@ -1,0 +1,904 @@
+/*******************************************************************************
+ * Copyright (c) 2008-2023 Maxprograms.
+ *
+ * This program and the accompanying materials
+ * are made available under the terms of the Eclipse Public License 1.0
+ * which accompanies this distribution, and is available at
+ * https://www.eclipse.org/org/documents/epl-v10.html
+ *
+ * Contributors:
+ *     Maxprograms - initial API and implementation
+ *******************************************************************************/
+package com.maxprograms.swordfish.tm;
+
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.lang.System.Logger;
+import java.lang.System.Logger.Level;
+import java.net.URISyntaxException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.sql.Statement;
+import java.text.MessageFormat;
+import java.util.Collections;
+import java.util.Enumeration;
+import java.util.Hashtable;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
+import java.util.NavigableSet;
+import java.util.Set;
+import java.util.TreeSet;
+import java.util.Vector;
+import java.util.ArrayList;
+import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.regex.Pattern;
+
+import javax.xml.parsers.ParserConfigurationException;
+
+import org.json.JSONArray;
+import org.json.JSONObject;
+import org.mapdb.Fun;
+import org.mapdb.Fun.Tuple2;
+import org.sqlite.Function;
+import org.xml.sax.SAXException;
+
+import com.maxprograms.languages.LanguageUtils;
+import com.maxprograms.swordfish.Constants;
+import com.maxprograms.swordfish.TmsServer;
+import com.maxprograms.swordfish.tmx.TMXReader;
+import com.maxprograms.xml.Element;
+import com.maxprograms.xml.Indenter;
+import com.maxprograms.xml.XMLUtils;
+
+public class SqliteDatabase implements ITmEngine {
+
+    Logger logger = System.getLogger(SqliteDatabase.class.getName());
+
+    private String dbname;
+    private File databaseFolder;
+    private File database;
+    private Connection conn;
+    private PreparedStatement storeTUV;
+    private PreparedStatement searchTUV;
+    private PreparedStatement deleteTUV;
+    private TuDatabase tuDb;
+    private FuzzyIndex fuzzyIndex;
+    private long next;
+    private String currProject;
+    private String currSubject;
+    private String currCustomer;
+    private String creationId;
+    private int matchThreshold;
+
+    // Connection pool for concurrent read operations
+    private BlockingQueue<Connection> readConnectionPool;
+    private static final int DEFAULT_POOL_SIZE = Runtime.getRuntime().availableProcessors();
+
+    // Thread pool for parallel segment searches in batchTranslate
+    private ExecutorService translatePool;
+
+    private TMXReader reader;
+
+    public SqliteDatabase(String dbname, String workFolder) throws IOException, SQLException {
+        this.dbname = dbname;
+        JSONObject json = TmsServer.getPreferences();
+        if (json.has("userName")) {
+            creationId = json.getString("userName");
+        } else {
+            creationId = System.getProperty("user.name");
+        }
+        if (json.has("matchThreshold")) {
+            matchThreshold = json.getInt("matchThreshold");
+        } else {
+            matchThreshold = 60;
+        }
+        File wfolder = new File(workFolder);
+        databaseFolder = new File(wfolder, dbname);
+        if (!databaseFolder.exists()) {
+            Files.createDirectories(databaseFolder.toPath());
+        }
+        if (new File(databaseFolder, "db.db").exists()) {
+            MessageFormat mf = new MessageFormat(Messages.getString("SqliteDatabase.0"));
+            throw new IOException(mf.format(new String[] { databaseFolder.getName() }));
+        }
+        database = new File(databaseFolder, "database.db");
+        boolean sqliteNeedsCreation = !database.exists();
+        DriverManager.registerDriver(new org.sqlite.JDBC());
+        conn = DriverManager.getConnection("jdbc:sqlite:" + database.getAbsolutePath().replace('\\', '/'));
+
+        // Optimize SQLite performance (must be done before setAutoCommit(false))
+        try (Statement stmt = conn.createStatement()) {
+            stmt.execute("PRAGMA journal_mode = WAL");
+            stmt.execute("PRAGMA synchronous = NORMAL");
+            stmt.execute("PRAGMA cache_size = -10000");
+        }
+
+        conn.setAutoCommit(false);
+
+        Function.create(conn, "REGEXP", new Function() {
+            @Override
+            protected void xFunc() throws SQLException {
+                String expression = value_text(0);
+                String value = value_text(1);
+                if (value == null)
+                    value = "";
+
+                Pattern pattern = Pattern.compile(expression);
+                result(pattern.matcher(value).find() ? 1 : 0);
+            }
+        });
+        if (sqliteNeedsCreation) {
+            createTables();
+        }
+
+        // Ensure indexes exist (creates them for existing databases without indexes)
+        ensureIndexes();
+
+        storeTUV = conn.prepareStatement("INSERT INTO tuv (tuid, lang, seg, puretext, textlength) VALUES (?,?,?,?,?)");
+        searchTUV = conn.prepareStatement("SELECT textlength FROM tuv WHERE tuid=? AND lang=?");
+        deleteTUV = conn.prepareStatement("DELETE FROM tuv WHERE tuid=? AND lang=?");
+        try {
+            tuDb = new TuDatabase(databaseFolder);
+        } catch (Exception e) {
+            logger.log(Level.ERROR, e.getMessage(), e);
+            MessageFormat mf = new MessageFormat(Messages.getString("SqliteDatabase.1"));
+            throw new IOException(mf.format(new String[] { dbname }));
+        }
+        try {
+            fuzzyIndex = new FuzzyIndex(databaseFolder);
+        } catch (Exception e) {
+            logger.log(Level.ERROR, e.getMessage(), e);
+            MessageFormat mf = new MessageFormat(Messages.getString("SqliteDatabase.2"));
+            throw new IOException(mf.format(new String[] { dbname }));
+        }
+
+        // Initialize connection pool for concurrent read operations
+        initializeConnectionPool(DEFAULT_POOL_SIZE);
+
+        // Thread pool sized to match connection pool for parallel TM searches
+        translatePool = Executors.newFixedThreadPool(DEFAULT_POOL_SIZE);
+    }
+
+    private void createTables() throws SQLException {
+        String sql = """
+                CREATE TABLE tuv (
+                tuid VARCHAR(256) NOT NULL,
+                lang VARCHAR(15) NOT NULL,
+                seg TEXT NOT NULL,
+                puretext TEXT NOT NULL,
+                textlength INTEGER NOT NULL,
+                PRIMARY KEY(tuid, lang)
+                );""";
+        try (Statement stmt = conn.createStatement()) {
+            stmt.execute(sql);
+            stmt.execute("CREATE INDEX idx_tuv_lang ON tuv(lang)");
+            stmt.execute("CREATE INDEX idx_tuv_lang_textlength ON tuv(lang, textlength)");
+        }
+        conn.commit();
+    }
+
+    private void ensureIndexes() throws SQLException {
+        boolean langIndexExists = false;
+        boolean compositeIndexExists = false;
+
+        // Check if indexes exist
+        try (Statement stmt = conn.createStatement()) {
+            try (ResultSet rs = stmt.executeQuery(
+                    "SELECT name FROM sqlite_master WHERE type='index' AND name='idx_tuv_lang'")) {
+                langIndexExists = rs.next();
+            }
+            try (ResultSet rs = stmt.executeQuery(
+                    "SELECT name FROM sqlite_master WHERE type='index' AND name='idx_tuv_lang_textlength'")) {
+                compositeIndexExists = rs.next();
+            }
+        }
+
+        // Create missing indexes and measure time
+        if (!langIndexExists || !compositeIndexExists) {
+            logger.log(Level.INFO, "Creating missing indexes for database: " + dbname);
+            long startTime = System.currentTimeMillis();
+
+            try (Statement stmt = conn.createStatement()) {
+                if (!langIndexExists) {
+                    logger.log(Level.INFO, "  Creating index on lang column...");
+                    stmt.execute("CREATE INDEX idx_tuv_lang ON tuv(lang)");
+                }
+                if (!compositeIndexExists) {
+                    logger.log(Level.INFO, "  Creating composite index on lang and textlength columns...");
+                    stmt.execute("CREATE INDEX idx_tuv_lang_textlength ON tuv(lang, textlength)");
+                }
+            }
+            conn.commit();
+
+            long elapsedTime = System.currentTimeMillis() - startTime;
+            logger.log(Level.INFO, "Indexes created successfully in " + elapsedTime + " ms (" +
+                    String.format("%.2f", elapsedTime / 1000.0) + " seconds)");
+        }
+    }
+
+    private void initializeConnectionPool(int size) throws IOException, SQLException {
+        readConnectionPool = new LinkedBlockingQueue<>(size);
+
+        for (int i = 0; i < size; i++) {
+            try {
+                Connection readConn = DriverManager.getConnection(
+                        "jdbc:sqlite:file:" + database.getAbsolutePath().replace('\\', '/'));
+
+                // Enable WAL and optimizations for read connection (must be done before
+                // setAutoCommit(false))
+                try (Statement stmt = readConn.createStatement()) {
+                    stmt.execute("PRAGMA journal_mode = WAL");
+                    stmt.execute("PRAGMA synchronous = NORMAL");
+                    stmt.execute("PRAGMA cache_size = -10000");
+                }
+
+                readConn.setAutoCommit(false);
+
+                // Register REGEXP function for each connection
+                org.sqlite.Function.create(readConn, "REGEXP", new org.sqlite.Function() {
+                    @Override
+                    protected void xFunc() throws SQLException {
+                        String expression = value_text(0);
+                        String value = value_text(1);
+                        if (value == null)
+                            value = "";
+                        Pattern pattern = Pattern.compile(expression);
+                        result(pattern.matcher(value).find() ? 1 : 0);
+                    }
+                });
+
+                readConnectionPool.add(readConn);
+            } catch (SQLException e) {
+                logger.log(Level.ERROR, "Failed to create connection pool", e);
+                throw new IOException("Failed to initialize connection pool", e);
+            }
+        }
+    }
+
+    private Connection acquireReadConnection() throws SQLException {
+        try {
+            return readConnectionPool.take();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new SQLException("Interrupted while acquiring read connection", e);
+        }
+    }
+
+    private void releaseReadConnection(Connection conn) {
+        if (conn != null) {
+            if (!readConnectionPool.offer(conn)) {
+                logger.log(Level.ERROR, "Failed to return connection to pool - possible connection leak");
+            }
+        }
+    }
+
+    @Override
+    public JSONArray batchTranslate(JSONObject params)
+            throws IOException, SAXException, ParserConfigurationException, SQLException, URISyntaxException {
+        String srcLang = params.getString("srcLang");
+        String tgtLang = params.getString("tgtLang");
+        JSONArray segments = params.getJSONArray("segments");
+        boolean caseSensitiveMatches = params.getBoolean("caseSensitiveMatches");
+        int size = segments.length();
+        List<Future<JSONObject>> futures = new ArrayList<>(size);
+        for (int i = 0; i < size; i++) {
+            final JSONObject json = segments.getJSONObject(i);
+            futures.add(translatePool.submit(() -> {
+                List<Match> matches = searchTranslation(json.getString("pure"), srcLang, tgtLang, matchThreshold,
+                        caseSensitiveMatches);
+                JSONArray array = new JSONArray();
+                for (Match m : matches) {
+                    array.put(m.toJSON());
+                }
+                json.put("matches", array);
+                return json;
+            }));
+        }
+        JSONArray result = new JSONArray();
+        for (Future<JSONObject> future : futures) {
+            try {
+                result.put(future.get());
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new IOException("Interrupted during batch translate", e);
+            } catch (ExecutionException e) {
+                Throwable cause = e.getCause();
+                if (cause instanceof IOException io) throw io;
+                if (cause instanceof SAXException sax) throw sax;
+                if (cause instanceof ParserConfigurationException pce) throw pce;
+                if (cause instanceof SQLException sql) throw sql;
+                if (cause instanceof URISyntaxException uri) throw uri;
+                throw new IOException("Unexpected error during batch translate", cause);
+            }
+        }
+        return result;
+    }
+
+    @Override
+    public void close() throws IOException, SQLException, URISyntaxException {
+        if (translatePool != null) {
+            translatePool.shutdown();
+        }
+        storeTUV.close();
+        deleteTUV.close();
+        searchTUV.close();
+        conn.commit();
+        conn.close();
+
+        // Close all pooled connections
+        if (readConnectionPool != null) {
+            while (!readConnectionPool.isEmpty()) {
+                Connection readConn = readConnectionPool.poll();
+                if (readConn != null && !readConn.isClosed()) {
+                    readConn.close();
+                }
+            }
+        }
+
+        fuzzyIndex.commit();
+        fuzzyIndex.close();
+        tuDb.commit();
+        tuDb.close();
+    }
+
+    @Override
+    public void commit() throws SQLException, IOException, URISyntaxException {
+        conn.commit();
+        fuzzyIndex.commit();
+        tuDb.commit();
+    }
+
+    @Override
+    public List<Element> concordanceSearch(String searchStr, String srcLang, int limit, boolean isRegexp,
+            boolean caseSensitive) throws SQLException, SAXException, IOException, ParserConfigurationException {
+        Connection readConn = null;
+        try {
+            readConn = acquireReadConnection();
+            return concordanceSearchWithConnection(readConn, searchStr, srcLang, limit, isRegexp, caseSensitive);
+        } finally {
+            releaseReadConnection(readConn);
+        }
+    }
+
+    private List<Element> concordanceSearchWithConnection(Connection readConn, String searchStr, String srcLang,
+            int limit, boolean isRegexp, boolean caseSensitive)
+            throws SQLException, SAXException, IOException, ParserConfigurationException {
+        List<Element> result = new Vector<>();
+        Vector<String> candidates = new Vector<>();
+        if (isRegexp) {
+            try (PreparedStatement stmt = readConn
+                    .prepareStatement("SELECT tuid, puretext FROM tuv WHERE lang=? AND puretext REGEXP ? LIMIT ?")) {
+                stmt.setString(1, srcLang);
+                stmt.setString(2, searchStr);
+                stmt.setInt(3, limit);
+                try (ResultSet rs = stmt.executeQuery()) {
+                    while (rs.next()) {
+                        candidates.add(rs.getString(1));
+                    }
+                }
+            }
+        } else {
+            String sql = caseSensitive ? "SELECT tuid, puretext FROM tuv WHERE lang=? AND puretext GLOB ? LIMIT ?"
+                    : "SELECT tuid, puretext FROM tuv WHERE lang=? AND puretext LIKE ? LIMIT ?";
+            String escaped = searchStr.replace("%", "\\%").replace("_", "\\_");
+            try (PreparedStatement stmt = readConn.prepareStatement(sql)) {
+                stmt.setString(1, srcLang);
+                stmt.setString(2, caseSensitive ? "*" + escaped + "*" : "%" + escaped + "%");
+                stmt.setInt(3, limit);
+                try (ResultSet rs = stmt.executeQuery()) {
+                    while (rs.next()) {
+                        candidates.add(rs.getString(1));
+                    }
+                }
+            }
+        }
+
+        Iterator<String> it = candidates.iterator();
+        while (it.hasNext()) {
+            String tuid = it.next();
+            Element tu = getTu(tuid, readConn);
+            result.add(tu);
+        }
+        return result;
+    }
+
+    @Override
+    public void deleteDatabase() throws IOException {
+        TmsServer.deleteFolder(databaseFolder);
+    }
+
+    private void writeString(FileOutputStream output, String string) throws IOException {
+        output.write(string.getBytes(StandardCharsets.UTF_8));
+    }
+
+    private void writeHeader(FileOutputStream output, String srcLang) throws IOException {
+        writeString(output, "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
+        writeString(output,
+                "<!DOCTYPE tmx PUBLIC \"-//LISA OSCAR:1998//DTD for Translation Memory eXchange//EN\" \"tmx14.dtd\" >\n");
+        writeString(output, "<tmx version=\"1.4\">\n");
+        writeString(output,
+                "<header creationtool=\"" + Constants.APPNAME + "\" creationtoolversion=\"" + Constants.VERSION
+                        + "\" srclang=\"" + srcLang + "\" "
+                        + " adminlang=\"en\" datatype=\"xml\" o-tmf=\"unknown\" segtype=\"block\" creationdate=\""
+                        + TMUtils.creationDate() + "\"/>\n");
+    }
+
+    @Override
+    public void exportMemory(String tmxfile, Set<String> langs, String srcLang) throws IOException, SQLException {
+        try (FileOutputStream output = new FileOutputStream(tmxfile)) {
+            writeHeader(output, srcLang);
+            writeString(output, "<body>\n");
+            try (PreparedStatement stmt = conn.prepareStatement("SELECT lang, seg FROM tuv WHERE tuid=?")) {
+                try (Statement tus = conn.createStatement()) {
+                    try (ResultSet tuKeys = tus.executeQuery("SELECT DISTINCT tuid FROM tuv")) {
+                        while (tuKeys.next()) {
+                            String tuid = tuKeys.getString(1);
+                            Element tu = tuDb.getTu(tuid);
+                            stmt.setString(1, tuid);
+                            int count = 0;
+                            try (ResultSet rs = stmt.executeQuery()) {
+                                while (rs.next()) {
+                                    String lang = rs.getString(1);
+                                    String seg = rs.getString(2);
+                                    if (seg.equals("<seg></seg>") || !langs.contains(lang)) {
+                                        continue;
+                                    }
+                                    try {
+                                        Element tuv = TMUtils.buildTuv(lang, seg);
+                                        tu.addContent(tuv);
+                                        count++;
+                                    } catch (Exception e) {
+                                        logger.log(Level.ERROR, Messages.getString("SqliteDatabase.3"), e);
+                                        logger.log(Level.INFO, "seg: " + seg);
+                                    }
+                                }
+                            }
+                            if (count >= 2) {
+                                Indenter.indent(tu, 2);
+                                writeString(output, tu.toString() + "\n");
+                            }
+                        }
+                    }
+                }
+                writeString(output, "</body>\n");
+                writeString(output, "</tmx>\n");
+            }
+        }
+    }
+
+    @Override
+    public Set<String> getAllClients() throws SQLException, IOException, URISyntaxException {
+        return tuDb.getCustomers();
+    }
+
+    @Override
+    public Set<String> getAllLanguages() throws SQLException, IOException, URISyntaxException {
+        Set<String> result = Collections.synchronizedSortedSet(new TreeSet<>());
+        try (Statement stmt = conn.createStatement()) {
+            try (ResultSet rs = stmt.executeQuery("SELECT DISTINCT lang FROM tuv")) {
+                while (rs.next()) {
+                    result.add(rs.getString(1));
+                }
+            }
+        }
+        return result;
+    }
+
+    @Override
+    public Set<String> getAllProjects() throws SQLException, IOException, URISyntaxException {
+        return tuDb.getProjects();
+    }
+
+    @Override
+    public Set<String> getAllSubjects() throws SQLException, IOException, URISyntaxException {
+        return tuDb.getSubjects();
+    }
+
+    @Override
+    public String getName() {
+        return dbname;
+    }
+
+    @Override
+    public Element getTu(String tuid)
+            throws IOException, SAXException, ParserConfigurationException, SQLException {
+        return getTu(tuid, conn);
+    }
+
+    private Element getTu(String tuid, Connection connection)
+            throws IOException, SAXException, ParserConfigurationException, SQLException {
+        Element tu = tuDb.getTu(tuid);
+        try (PreparedStatement stmt = connection.prepareStatement("SELECT lang, seg FROM tuv WHERE tuid=?")) {
+            stmt.setString(1, tuid);
+            try (ResultSet rs = stmt.executeQuery()) {
+                while (rs.next()) {
+                    String lang = rs.getString(1);
+                    String seg = rs.getString(2);
+                    if (seg.equals("<seg></seg>")) {
+                        continue;
+                    }
+                    Element tuv = TMUtils.buildTuv(lang, seg);
+                    tu.addContent(tuv);
+                }
+            }
+        }
+        return tu;
+    }
+
+    @Override
+    public String getType() {
+        return SqliteDatabase.class.getName();
+    }
+
+    @Override
+    public void removeTu(String tuid)
+            throws IOException, SAXException, ParserConfigurationException, SQLException, URISyntaxException {
+        Element tu = getTu(tuid);
+        List<Element> tuvs = tu.getChildren("tuv");
+        Iterator<Element> it = tuvs.iterator();
+        while (it.hasNext()) {
+            Element tuv = it.next();
+            String lang = LanguageUtils.normalizeCode(tuv.getAttributeValue("xml:lang"));
+            delete(tuid, lang);
+        }
+        tuDb.remove(tuid);
+        commit();
+    }
+
+    private void delete(String tuid, String lang) throws SQLException {
+        deleteTUV.setString(1, tuid);
+        deleteTUV.setString(2, lang);
+        deleteTUV.execute();
+    }
+
+    @Override
+    public List<Element> searchAll(String searchStr, String srcLang, int similarity, boolean caseSensitive)
+            throws IOException, SAXException, ParserConfigurationException, SQLException {
+        Connection readConn = null;
+        try {
+            readConn = acquireReadConnection();
+            return searchAllWithConnection(readConn, searchStr, srcLang, similarity, caseSensitive);
+        } finally {
+            releaseReadConnection(readConn);
+        }
+    }
+
+    private List<Element> searchAllWithConnection(Connection readConn, String searchStr, String srcLang,
+            int similarity, boolean caseSensitive)
+            throws IOException, SAXException, ParserConfigurationException, SQLException {
+        List<Element> result = new Vector<>();
+
+        int[] ngrams = NGrams.getNGrams(searchStr);
+        int size = ngrams.length;
+        if (size == 0) {
+            return result;
+        }
+        int min = size * similarity / 100;
+        int max = size * (200 - similarity) / 100;
+
+        int minLength = searchStr.length() * similarity / 100;
+        int maxLength = searchStr.length() * (200 - similarity) / 100;
+
+        Map<String, Integer> candidates = new Hashtable<>();
+        try (PreparedStatement stmt = readConn.prepareStatement(
+                "SELECT puretext FROM tuv WHERE lang=? AND tuid=? AND textlength>=? AND textlength<=?")) {
+            stmt.setString(1, srcLang);
+            stmt.setInt(3, minLength);
+            stmt.setInt(4, maxLength);
+
+            synchronized (fuzzyIndex) {
+                NavigableSet<Fun.Tuple2<Integer, String>> index = fuzzyIndex.getIndex(srcLang);
+                for (int i = 0; i < ngrams.length; i++) {
+                    Iterable<String> keys = Fun.filter(index, ngrams[i]);
+                    Iterator<String> it = keys.iterator();
+                    while (it.hasNext()) {
+                        String tuid = it.next();
+                        if (candidates.containsKey(tuid)) {
+                            int count = candidates.get(tuid);
+                            candidates.put(tuid, count + 1);
+                        } else {
+                            candidates.put(tuid, 1);
+                        }
+                    }
+                }
+            }
+            Set<String> tuids = candidates.keySet();
+            Iterator<String> it = tuids.iterator();
+            while (it.hasNext()) {
+                String tuid = it.next();
+                int count = candidates.get(tuid);
+                if (count >= min && count <= max) {
+                    stmt.setString(2, tuid);
+                    try (ResultSet rs = stmt.executeQuery()) {
+                        while (rs.next()) {
+                            String pure = rs.getString(1);
+                            int distance;
+                            if (caseSensitive) {
+                                distance = MatchQuality.similarity(searchStr, pure);
+                            } else {
+                                distance = MatchQuality.similarity(searchStr.toLowerCase(), pure.toLowerCase());
+                            }
+                            if (distance >= similarity) {
+                                Element tu = getTu(tuid, readConn);
+                                result.add(tu);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        return result;
+    }
+
+    @Override
+    public List<Match> searchTranslation(String searchStr, String srcLang, String tgtLang, int similarity,
+            boolean caseSensitive) throws SAXException, IOException, ParserConfigurationException, SQLException {
+        Connection readConn = null;
+        try {
+            readConn = acquireReadConnection();
+            return searchTranslationWithConnection(readConn, searchStr, srcLang, tgtLang, similarity, caseSensitive);
+        } finally {
+            releaseReadConnection(readConn);
+        }
+    }
+
+    private List<Match> searchTranslationWithConnection(Connection readConn, String searchStr, String srcLang,
+            String tgtLang, int similarity, boolean caseSensitive)
+            throws SAXException, IOException, ParserConfigurationException, SQLException {
+        // search for TUs with a given source and target language
+        List<Match> result = new Vector<>();
+
+        int[] ngrams = null;
+        ngrams = NGrams.getNGrams(searchStr);
+        int size = ngrams.length;
+        if (size == 0) {
+            return result;
+        }
+        int min = size * similarity / 100;
+        int max = size * (200 - similarity) / 100;
+
+        int minLength = searchStr.length() * similarity / 100;
+        int maxLength = searchStr.length() * (200 - similarity) / 100;
+
+        Hashtable<String, Integer> candidates = new Hashtable<>();
+        try (PreparedStatement stmt = readConn.prepareStatement(
+                "SELECT puretext, seg, textlength FROM tuv WHERE lang=? AND tuid=? AND textlength>=? AND textlength<=?")) {
+            stmt.setString(1, srcLang);
+            stmt.setInt(3, minLength);
+            stmt.setInt(4, maxLength);
+
+            try (PreparedStatement stmt2 = readConn
+                    .prepareStatement("SELECT lang, seg FROM tuv WHERE tuid=? AND lang=?")) {
+                stmt2.setString(2, tgtLang);
+
+                synchronized (fuzzyIndex) {
+                    NavigableSet<Fun.Tuple2<Integer, String>> index = fuzzyIndex.getIndex(srcLang);
+                    for (int i = 0; i < ngrams.length; i++) {
+                        Iterable<String> keys = Fun.filter(index, ngrams[i]);
+                        Iterator<String> it = keys.iterator();
+                        while (it.hasNext()) {
+                            String tuid = it.next();
+                            if (candidates.containsKey(tuid)) {
+                                int count = candidates.get(tuid);
+                                candidates.put(tuid, count + 1);
+                            } else {
+                                candidates.put(tuid, 1);
+                            }
+                        }
+                    }
+                }
+                Enumeration<String> tuids = candidates.keys();
+                while (tuids.hasMoreElements()) {
+                    String tuid = tuids.nextElement();
+                    int count = candidates.get(tuid);
+                    if (count >= min && count <= max) {
+                        stmt.setString(2, tuid);
+                        stmt2.setString(1, tuid);
+                        try (ResultSet rs = stmt.executeQuery()) {
+                            while (rs.next()) {
+                                String pure = rs.getString(1);
+                                String srcSeg = rs.getString(2);
+                                int distance;
+                                if (caseSensitive) {
+                                    distance = MatchQuality.similarity(searchStr, pure);
+                                } else {
+                                    distance = MatchQuality.similarity(searchStr.toLowerCase(), pure.toLowerCase());
+                                }
+                                if (distance >= similarity) {
+                                    boolean tgtFound = false;
+                                    Element target = null;
+                                    try (ResultSet rs2 = stmt2.executeQuery()) {
+                                        while (rs2.next()) {
+                                            String lang = rs2.getString(1);
+                                            String seg = rs2.getString(2);
+                                            target = TMUtils.buildTuv(lang, seg);
+                                            tgtFound = true;
+                                        }
+                                    }
+                                    if (tgtFound) {
+                                        Element source = TMUtils.buildTuv(srcLang, srcSeg);
+                                        Map<String, String> propsMap = new Hashtable<>();
+                                        Element tu = getTu(tuid, readConn);
+                                        List<Element> props = tu.getChildren("prop");
+                                        Iterator<Element> pt = props.iterator();
+                                        while (pt.hasNext()) {
+                                            Element prop = pt.next();
+                                            propsMap.put(prop.getAttributeValue("type"), prop.getText());
+                                        }
+                                        Match match = new Match(tuid, source, target, distance, dbname, propsMap);
+                                        result.add(match);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Collections.sort(result);
+        return result;
+    }
+
+    @Override
+    public int storeTMX(String tmxFile, String project, String customer, String subject)
+            throws SAXException, IOException, ParserConfigurationException, SQLException, URISyntaxException {
+        next = System.currentTimeMillis();
+        if (customer == null) {
+            customer = "";
+        }
+        if (subject == null) {
+            subject = "";
+        }
+        if (project == null) {
+            project = "";
+        }
+        currProject = project;
+        currSubject = subject;
+        currCustomer = customer;
+
+        reader = new TMXReader(this);
+        reader.parse(new File(tmxFile).toURI().toURL());
+        int imported = reader.getCount();
+        commit();
+        reader = null;
+        return imported;
+    }
+
+    @Override
+    public void storeTu(Element tu) throws IOException, SQLException, URISyntaxException {
+        Set<String> tuLangs = Collections.synchronizedSortedSet(new TreeSet<>());
+        List<Element> tuvs = tu.getChildren("tuv");
+        String tuid = tu.getAttributeValue("tuid");
+        if (tuid.isEmpty()) {
+            tuid = nextId();
+            tu.setAttribute("tuid", tuid);
+        }
+        Element oldTu = tuDb.getTu(tuid);
+        tu.setAttribute("creationdate",
+                oldTu.hasAttribute("creationdate") ? oldTu.getAttributeValue("creationdate") : TMUtils.creationDate());
+        tu.setAttribute("creationid",
+                oldTu.hasAttribute("creationid") ? oldTu.getAttributeValue("creationid") : creationId);
+
+        Hashtable<String, String> props = new Hashtable<>();
+        List<Element> properties = tu.getChildren("prop");
+        Iterator<Element> kt = properties.iterator();
+        while (kt.hasNext()) {
+            Element prop = kt.next();
+            props.put(prop.getAttributeValue("type"), prop.getText());
+        }
+        if (currSubject != null && !currSubject.isEmpty() && !props.containsKey("subject")) {
+            Element prop = new Element("prop");
+            prop.setAttribute("type", "subject");
+            prop.setText(XMLUtils.cleanText(currSubject));
+            List<Element> content = tu.getChildren();
+            content.add(0, prop);
+            tu.setChildren(content);
+            props.put(prop.getAttributeValue("type"), prop.getText());
+        }
+        String sub = props.get("subject");
+        if (sub != null) {
+            tuDb.storeSubject(sub);
+        }
+        if (currCustomer != null && !currCustomer.isEmpty() && !props.containsKey("customer")) {
+            Element prop = new Element("prop");
+            prop.setAttribute("type", "customer");
+            prop.setText(XMLUtils.cleanText(currCustomer));
+            List<Element> content = tu.getChildren();
+            content.add(0, prop);
+            tu.setChildren(content);
+            props.put(prop.getAttributeValue("type"), prop.getText());
+        }
+        String cust = props.get("customer");
+        if (cust != null) {
+            tuDb.storeCustomer(cust);
+        }
+        if (currProject != null && !currProject.isEmpty() && !props.containsKey("project")) {
+            Element prop = new Element("prop");
+            prop.setAttribute("type", "project");
+            prop.setText(XMLUtils.cleanText(currProject));
+            List<Element> content = tu.getChildren();
+            content.add(0, prop);
+            tu.setChildren(content);
+            props.put(prop.getAttributeValue("type"), prop.getText());
+        }
+        String proj = props.get("project");
+        if (proj != null) {
+            tuDb.storeProject(proj);
+        }
+
+        storeTUV.setString(1, tuid);
+
+        Iterator<Element> it = tuvs.iterator();
+        while (it.hasNext()) {
+            Element tuv = it.next();
+            String lang = LanguageUtils.normalizeCode(tuv.getAttributeValue("xml:lang"));
+            if (lang != null && !tuLangs.contains(lang)) {
+                if (exists(tuid, lang)) {
+                    delete(tuid, lang);
+                    tu.setAttribute("changedate", TMUtils.creationDate());
+                    tu.setAttribute("changeid", creationId);
+                }
+                Element seg = tuv.getChild("seg");
+                String puretext = TMUtils.extractText(seg);
+                if (puretext.isEmpty()) {
+                    continue;
+                }
+                storeTUV.setString(2, lang);
+                storeTUV.setString(3, seg.toString());
+                storeTUV.setString(4, puretext);
+                storeTUV.setInt(5, puretext.length());
+                storeTUV.execute();
+                tuLangs.add(lang);
+
+                tuDb.store(tuid, tu);
+
+                int[] ngrams = NGrams.getNGrams(puretext);
+                NavigableSet<Fun.Tuple2<Integer, String>> index = fuzzyIndex.getIndex(lang);
+                for (int i = 0; i < ngrams.length; i++) {
+                    Tuple2<Integer, String> entry = Fun.t2(ngrams[i], tuid);
+                    if (!index.contains(entry)) {
+                        index.add(entry);
+                    }
+                }
+            }
+        }
+    }
+
+    private String nextId() {
+        if (next == 0l) {
+            next = System.currentTimeMillis();
+        }
+        return "" + next++;
+    }
+
+    private boolean exists(String tuid, String lang) throws SQLException {
+        searchTUV.setString(1, tuid);
+        searchTUV.setString(2, lang);
+        boolean found = false;
+        try (ResultSet rs = searchTUV.executeQuery()) {
+            while (rs.next()) {
+                found = true;
+            }
+        }
+        return found;
+    }
+
+    public int getCount() {
+        if (reader != null) {
+            return reader.getCount();
+        }
+        return 0;
+    }
+}

@@ -1,0 +1,154 @@
+/*******************************************************************************
+ * Copyright (c) 2007-2026 Maxprograms.
+ *
+ * This program and the accompanying materials
+ * are made available under the terms of the Eclipse Public License 1.0
+ * which accompanies this distribution, and is available at
+ * https://www.eclipse.org/org/documents/epl-v10.html
+ *
+ * Contributors:
+ *     Maxprograms - initial API and implementation
+ *******************************************************************************/
+
+import { Catalog, ContentHandler, Grammar, XMLAttribute, XMLElement } from "typesxml";
+import { MTManager } from "./mtManager.js";
+
+export class MTContentHandler implements ContentHandler {
+
+    mtManager: MTManager;
+    project: string;
+    file: string = '';
+    unit: string = '';
+    segment: string = '';
+    srcLang: string = '';
+    tgtLang: string = '';
+
+    pendingTranslations: Promise<void>[];
+
+    stack: Array<XMLElement>
+
+    constructor(mtManager: MTManager, project: string, pendingTranslations: Promise<void>[]) {
+        this.mtManager = mtManager;
+        this.project = project;
+        this.pendingTranslations = pendingTranslations;
+        this.stack = new Array<XMLElement>();
+    }
+
+    initialize(): void {
+        // do nothing
+    }
+
+    setCatalog(catalog: Catalog): void {
+        // do nothing
+    }
+
+    setValidating(validating: boolean): void {
+        // do nothing
+    }
+
+    startDocument(): void {
+        // do nothing
+    }
+
+    endDocument(): void {
+        // do nothing
+    }
+
+    xmlDeclaration(version: string, encoding: string, standalone: string): void {
+        // do nothing
+    }
+
+    startElement(name: string, atts: XMLAttribute[]): void {
+        let element: XMLElement = new XMLElement(name);
+        atts.forEach(att => {
+            element.setAttribute(att);
+        });
+        if (name === 'xliff') {
+            this.srcLang = (element.getAttribute('srcLang') as XMLAttribute).getValue();
+            this.tgtLang = (element.getAttribute('tgtLang') as XMLAttribute).getValue();
+            return;
+        }
+        if (name === 'file') {
+            this.file = (element.getAttribute('id') as XMLAttribute).getValue();
+            return;
+        }
+        if (name === 'unit') {
+            this.unit = (element.getAttribute('id') as XMLAttribute).getValue();
+            return;
+        }
+        if (name === 'segment') {
+            this.segment = (element.getAttribute('id') as XMLAttribute).getValue();
+        }
+        if (this.stack.length > 0) {
+            this.stack[this.stack.length - 1].addElement(element);
+        }
+        this.stack.push(element);
+    }
+
+    endElement(name: string): void {
+        if (name === 'xliff' || name === 'file' || name === 'unit') {
+            return;
+        }
+        let e: XMLElement = this.stack.pop() as XMLElement;
+        if (name === 'segment') {
+            this.translate(e);
+            this.stack = new Array<XMLElement>();
+        }
+    }
+
+    internalSubset(declaration: string): void {
+        // do nothing
+    }
+
+    characters(ch: string): void {
+        if (this.stack.length > 0) {
+            this.stack[this.stack.length - 1].addString(ch);
+        }
+    }
+
+    ignorableWhitespace(ch: string): void {
+        // do nothing
+    }
+
+    comment(ch: string): void {
+        // do
+    }
+
+    processingInstruction(target: string, data: string): void {
+        // do nothing
+    }
+
+    startCDATA(): void {
+        // do nothing
+    }
+
+    endCDATA(): void {
+        // do nothing
+    }
+
+    startDTD(name: string, publicId: string, systemId: string): void {
+        // do nothing
+    }
+
+    endDTD(): void {
+        // do nothing
+    }
+
+    skippedEntity(name: string): void {
+        console.log('skippedEntity: ' + name);
+    }
+
+    translate(segment: XMLElement): void {
+        let source: XMLElement = segment.getChild('source') as XMLElement;
+        let promise: Promise<void> = this.mtManager.translateElement(source, this.project, this.file, this.unit, this.segment, []);
+        this.pendingTranslations.push(promise);
+    }
+
+    getGrammar(): Grammar | undefined {
+        return undefined;
+    }
+
+    setGrammar(grammar: Grammar | undefined): void {
+        // do nothing
+    }
+}

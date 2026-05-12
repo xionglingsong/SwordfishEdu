@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <title>翻译评分报告</title>
+    <link id="theme" rel="stylesheet" type="text/css" href="../../css/light.css">
+    <link rel="stylesheet" type="text/css" href="../../css/fonts.css">
+    <style>
+        body { margin: 0; padding: 0; overflow: hidden; }
+        .reportContainer { padding: 16px; overflow-y: auto; height: calc(100vh - 0px); }
+        .scoreOverview { background: #f5f7fa; border-radius: 8px; padding: 16px; margin-bottom: 24px; border-bottom: 1px solid #e0e0e0; padding-bottom: 20px; }
+        .scoreBig { font-size: 36px; font-weight: bold; }
+        .scoreBig.good { color: #4CAF50; }
+        .scoreBig.mid { color: #FF9800; }
+        .scoreBig.low { color: #F44336; }
+        .scoreMax { font-size: 18px; color: #888; margin-left: 2px; }
+        .levelBadge { display: inline-block; padding: 4px 12px; border-radius: 12px; font-size: 13px; font-weight: bold; margin-left: 12px; }
+        .levelBadge.l1 { background: #E8F5E9; color: #2E7D32; }
+        .levelBadge.l2 { background: #FFF3E0; color: #E65100; }
+        .levelBadge.l3 { background: #E3F2FD; color: #1565C0; }
+        .overallComment { margin-top: 8px; font-size: 13px; line-height: 1.75; color: #333; }
+        .suggestionsBox { background: #FFFDE7; border-left: 3px solid #FFC107; padding: 10px 14px; margin-top: 24px; border-radius: 0 6px 6px 0; font-size: 12px; }
+        .suggestionsBox li { margin-bottom: 4px; line-height: 1.5; }
+        .suggestionsTitle { font-weight: bold; margin-bottom: 6px; color: #F57F17; }
+
+        .expandAllBar { text-align: right; margin-bottom: 12px; }
+        .expandAllLink { font-size: 12px; color: #1a73e8; cursor: pointer; }
+        .expandAllLink:hover { text-decoration: underline; }
+        .zoomBtn { font-size: 12px; font-weight: bold; color: #555; cursor: pointer; text-decoration: none; padding: 2px 8px; border: 1px solid #ddd; border-radius: 3px; }
+        .zoomBtn:hover { background: #f0f0f0; }
+        .zoomLabel { font-size: 12px; color: #666; min-width: 36px; text-align: center; }
+        .segmentNav { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 16px; padding: 8px; background: #fafafa; border-radius: 4px; border: 1px solid #e8e8e8; }
+        .segmentNavLink { text-decoration: none; padding: 2px 8px; border-radius: 4px; font-size: 12px; background: white; border: 1px solid #e0e0e0; }
+        .segmentNavLink:hover { background: #f0f0f0; }
+        .segmentNavIdx { color: #333; }
+        .segmentNavScore { font-weight: bold; }
+        .segmentNavScore.good { color: #4CAF50; }
+        .segmentNavScore.mid { color: #FF9800; }
+        .segmentNavScore.low { color: #F44336; }
+
+        .segmentCard { border: 1px solid #e0e0e0; border-radius: 6px; margin-bottom: 12px; overflow: hidden; }
+        .segmentHeader { display: flex; align-items: center; padding: 10px 14px; cursor: pointer; background: #fafafa; user-select: none; }
+        .segmentHeader:hover { background: #f0f0f0; }
+        .segmentArrow { margin-right: 8px; font-size: 12px; color: #666; transition: transform 0.2s; display: inline-block; }
+        .segmentArrow.open { transform: rotate(90deg); }
+        .segmentTitle { font-weight: bold; font-size: 13px; flex: 1; }
+        .segmentScore { padding: 2px 10px; border-radius: 10px; color: white; font-size: 12px; font-weight: bold; }
+        .segmentScore.good { background: #4CAF50; }
+        .segmentScore.mid { background: #FF9800; }
+        .segmentScore.low { background: #F44336; }
+        .segmentBody { padding: 12px 14px; display: none; border-top: 1px solid #e0e0e0; }
+        .segmentBody.open { display: block; }
+
+        .sourceBox { background: #f5f5f5; padding: 8px 12px; border-radius: 4px; margin-bottom: 10px; font-size: 12px; line-height: 1.75; }
+        .studentBox { background: #FFF8F0; padding: 8px 12px; border-radius: 4px; margin-bottom: 10px; font-size: 12px; line-height: 1.75; border-left: 3px solid #FF8A65; }
+        .label { font-weight: bold; font-size: 11px; text-transform: uppercase; color: #888; margin-bottom: 4px; margin-top: 8px; }
+
+        .comparisonArea { margin-bottom: 10px; }
+        .diffRow { display: flex; align-items: baseline; margin-bottom: 2px; font-size: 12px; font-family: monospace; line-height: 1.75; }
+        .diffLabel { width: 48px; font-weight: bold; font-size: 12px; color: #666; flex-shrink: 0; }
+        .diffRemoved { background: #ffebee; color: #c62828; text-decoration: line-through; }
+        .diffAdded { background: #e8f5e9; color: #2e7d32; }
+
+        .tags { display: flex; flex-wrap: wrap; gap: 4px; margin: 6px 0; }
+        .tag { padding: 2px 8px; border-radius: 10px; font-size: 12px; }
+        .tagStrength { background: #e8f5e9; color: #2e7d32; }
+        .tagIssue { background: #ffebee; color: #c62828; }
+
+        .analysisBox { background: #E3F2FD; padding: 10px 14px; border-radius: 6px; margin-top: 8px; font-size: 12px; line-height: 1.75; }
+        .analysisBox h1, .analysisBox h2, .analysisBox h3 { margin: 8px 0 4px; font-size: 13px; }
+        .analysisBox ul, .analysisBox ol { margin: 4px 0; padding-left: 20px; }
+        .analysisBox li { margin-bottom: 2px; }
+        .analysisBox p { margin: 4px 0; }
+        .analysisBox strong { color: #1565C0; }
+        .analysisBox code { background: #BBDEFB; padding: 1px 4px; border-radius: 3px; font-size: 11px; }
+
+        .reflectionArea { margin-top: 10px; padding-top: 10px; border-top: 1px dashed #ccc; }
+        .reflectionInput { width: 100%; min-height: 60px; padding: 8px; border: 1px solid #ddd; border-radius: 4px; font-size: 12px; resize: vertical; font-family: inherit; }
+        .reflectionInput:focus { outline: none; border-color: #2196F3; }
+
+        .emptyReport { text-align: center; padding: 40px; color: #999; font-size: 14px; }
+
+        /* === Sub-score progress bars (v2 overview) === */
+        .subScoreBars { margin-top: 12px; display: flex; flex-direction: column; gap: 6px; }
+        .subScoreRow { display: flex; align-items: center; gap: 8px; }
+        .subScoreLabel { width: 160px; font-size: 12px; font-weight: 600; color: #555; flex-shrink: 0; }
+        .subScoreTrack { flex: 1; height: 10px; background: #e0e0e0; border-radius: 5px; overflow: hidden; }
+        .subScoreFill { height: 100%; border-radius: 5px; transition: width 0.5s ease; }
+        .subScoreFill.good { background: #4CAF50; }
+        .subScoreFill.mid { background: #FF9800; }
+        .subScoreFill.low { background: #F44336; }
+        .subScoreValue { width: 50px; font-size: 12px; color: #666; text-align: right; flex-shrink: 0; }
+
+        /* === Overall analysis (v2) === */
+        .overallAnalysis { margin-top: 10px; padding: 10px 14px; background: #f5f7fa; border-radius: 6px; font-size: 13px; line-height: 1.8; color: #333; }
+        .analysisLine { display: block; margin-bottom: 6px; padding-left: 12px; border-left: 2px solid #ddd; }
+
+        /* === Quality highlights === */
+        .qualitySection { margin-top: 10px; display: flex; flex-wrap: wrap; gap: 6px; }
+        .qualityBadge { display: inline-block; padding: 3px 10px; border-radius: 10px; font-size: 12px; font-weight: bold; background: #E8F5E9; color: #2E7D32; }
+
+        /* === References section (v2) === */
+        .referencesSection { margin-bottom: 10px; }
+        .refBox { padding: 6px 12px; border-radius: 4px; font-size: 12px; line-height: 1.75; margin-bottom: 4px; }
+        .refBox.official { background: #f0f4f8; border-left: 3px solid #90CAF9; }
+        .refBox.alternative { background: #FAFAFA; border-left: 3px solid #CE93D8; }
+        .refBadge { display: inline-block; padding: 1px 8px; border-radius: 8px; font-size: 11px; font-weight: bold; margin-right: 6px; }
+        .refBadge.official { background: #BBDEFB; color: #1565C0; }
+        .refBadge.alt { background: #E1BEE7; color: #6A1B9A; }
+        .altToggle { display: inline-block; font-size: 12px; color: #1a73e8; cursor: pointer; margin: 4px 0; }
+        .altToggle:hover { text-decoration: underline; }
+
+        /* === Error cards (v2) === */
+        .errorsSection { margin: 8px 0; }
+        .errorsTitle { font-weight: bold; font-size: 12px; text-transform: uppercase; color: #c62828; margin-bottom: 4px; }
+        .errorCard { padding: 8px 10px; margin-bottom: 4px; border-radius: 4px; background: #FFF8F0; border-left: 3px solid #FF7043; font-size: 12px; line-height: 1.7; }
+        .errorCardHeader { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-bottom: 4px; }
+        .errorCard.severity3 { background: #FFF0F0; border-left-width: 4px; font-size: 13px; padding: 10px 12px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
+        .errorCard.severity2 { background: #FFFDE7; border-left-color: #FFB74D; }
+        .errorCard.severity1 { background: #F5F5F5; border-left-color: #BDBDBD; }
+        .errorCard.severity0 { padding: 6px 8px; opacity: 0.85; }
+        .errorBadge { display: inline-block; padding: 1px 8px; border-radius: 8px; font-size: 11px; font-weight: bold; margin-right: 4px; }
+        .errorBadge.meaning { background: #BBDEFB; color: #1565C0; }
+        .errorBadge.mechanics { background: #C8E6C9; color: #2E7D32; }
+        .errorBadge.quality { background: #E1BEE7; color: #6A1B9A; }
+        .errorDeduction { font-size: 11px; font-weight: bold; margin-left: 4px; }
+        .errorDeduction.minor { color: #888; }
+        .errorDeduction.moderate { color: #E65100; }
+        .errorDeduction.serious { color: #F44336; }
+        .errorDeduction.critical { color: #B71C1C; }
+        .errorRepeat { font-size: 11px; color: #F57F17; font-weight: bold; margin-left: 4px; }
+        .errorDescription { color: #444; }
+        .errorFix { margin-top: 2px; font-size: 12px; }
+        .errorFix .orig { text-decoration: line-through; color: #c62828; background: #ffebee; padding: 1px 4px; border-radius: 3px; }
+        .errorFix .corr { color: #2E7D32; background: #e8f5e9; padding: 1px 4px; border-radius: 3px; margin-left: 4px; }
+
+        /* === Inline error marks in student translation === */
+        .errorMark { border-bottom: 2px wavy; cursor: help; }
+        .errorMark.minor { border-bottom-color: #9E9E9E; }
+        .errorMark.moderate { border-bottom-color: #FF9800; }
+        .errorMark.serious { border-bottom-color: #FF5722; }
+        .errorMark.critical { border-bottom-color: #D32F2F; background: #FFF0F0; }
+
+        /* === Micro bars in segment header (v2) === */
+        .microBars { display: inline-flex; gap: 2px; margin-left: 8px; align-items: flex-end; height: 16px; }
+        .microBar { width: 4px; border-radius: 1px; }
+        .microBar.good { background: #4CAF50; }
+        .microBar.mid { background: #FF9800; }
+        .microBar.low { background: #F44336; }
+
+        /* === Print / PDF styles === */
+        @media print {
+            body { overflow: visible !important; }
+            .reportContainer { height: auto !important; overflow: visible !important; zoom: 1 !important; }
+            .expandAllBar, .segmentNav, .reflectionArea, .altToggle { display: none !important; }
+            .segmentBody { display: block !important; }
+            .segmentCard { break-inside: avoid; page-break-inside: avoid; }
+            .scoreOverview { break-after: avoid; }
+            .errorCard { break-inside: avoid; }
+            .segmentHeader { background: #f5f5f5 !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+            .segmentScore, .levelBadge, .errorBadge, .qualityBadge, .refBadge,
+            .subScoreFill, .errorCard, .errorMark { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+            .scoreBig { font-size: 28px; }
+            a[href] { color: #333; text-decoration: none; }
+        }
+    </style>
+</head>
+<body class="dialogBody">
+    <div id="reportContainer" class="reportContainer">
+        <div class="emptyReport">暂无评分报告。提交翻译后，评分结果将在此处显示。</div>
+    </div>
+    <script>
+        const { ScoreReport } = require('../../js/scoreReport.js');
+        new ScoreReport();
+    </script>
+</body>
+</html>

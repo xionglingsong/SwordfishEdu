@@ -1,0 +1,172 @@
+/*******************************************************************************
+ * Copyright (c) 2007-2026 Maxprograms.
+ *
+ * This program and the accompanying materials
+ * are made available under the terms of the Eclipse Public License 1.0
+ * which accompanies this distribution, and is available at
+ * https://www.eclipse.org/org/documents/epl-v10.html
+ *
+ * Contributors:
+ *     Maxprograms - initial API and implementation
+ *******************************************************************************/
+
+package com.maxprograms.swordfish.tm;
+
+import java.io.IOException;
+import java.util.Hashtable;
+import java.util.Iterator;
+import java.util.Map;
+import java.util.UUID;
+
+import javax.xml.parsers.ParserConfigurationException;
+
+import org.json.JSONObject;
+import org.xml.sax.SAXException;
+
+import com.maxprograms.swordfish.xliff.XliffUtils;
+import com.maxprograms.xml.Element;
+
+public class Match implements Comparable<Match> {
+
+	private String id;
+	private Element source;
+	private Element target;
+	private int similarity;
+	private String origin;
+	private Map<String, String> properties;
+
+	public Match(String id, Element source, Element target, int similarity, String origin,
+			Map<String, String> properties) {
+		this.id = id;
+		this.source = source;
+		this.target = target;
+		this.similarity = similarity;
+		this.origin = origin;
+		this.properties = properties;
+	}
+
+	public Match(JSONObject json) throws SAXException, IOException, ParserConfigurationException {
+		if (json.has("id")) {
+			id = json.getString("id");
+		} else {
+			id = UUID.randomUUID().toString();
+		}
+		source = XliffUtils.buildElement(json.getString("source"));
+		target = XliffUtils.buildElement(json.getString("target"));
+		similarity = json.getInt("similarity");
+		origin = json.getString("origin");
+		properties = new Hashtable<>();
+		if (json.has("properties")) {
+			JSONObject props = json.getJSONObject("properties");
+			Iterator<String> it = props.keys();
+			while (it.hasNext()) {
+				String key = it.next();
+				properties.put(key, props.getString(key));
+			}
+		}
+	}
+
+	public JSONObject toJSON() {
+		JSONObject result = new JSONObject();
+		result.put("id", id);
+		result.put("source", source.toString());
+		result.put("target", target.toString());
+		result.put("similarity", similarity);
+		result.put("origin", origin);
+		if (properties != null && !properties.isEmpty()) {
+			JSONObject props = new JSONObject();
+			Iterator<String> keys = properties.keySet().iterator();
+			while (keys.hasNext()) {
+				String key = keys.next();
+				props.put(key, properties.get(key));
+			}
+			result.put("properties", props);
+		}
+		return result;
+	}
+
+	public String getId() {
+		return id;
+	}
+
+	public void setId(String id) {
+		this.id = id;
+	}
+
+	public Element getSource() {
+		return source;
+	}
+
+	public void setSource(Element source) {
+		this.source = source;
+	}
+
+	public Element getTarget() {
+		return target;
+	}
+
+	public void setTarget(Element target) {
+		this.target = target;
+	}
+
+	public int getSimilarity() {
+		return similarity;
+	}
+
+	public void setSimilarity(int similarity) {
+		this.similarity = similarity;
+	}
+
+	public String getOrigin() {
+		return origin;
+	}
+
+	public void setOrigin(String origin) {
+		this.origin = origin;
+	}
+
+	public Map<String, String> getProperties() {
+		return properties;
+	}
+
+	@Override
+	public int compareTo(Match o) {
+		if (similarity < o.getSimilarity()) {
+			return 1;
+		}
+		if (similarity > o.getSimilarity()) {
+			return -1;
+		}
+		if (getCreationDate() < o.getCreationDate()) {
+			return 1;
+		}
+		if (getCreationDate() > o.getCreationDate()) {
+			return -1;
+		}
+		return origin.compareTo(o.getOrigin());
+	}
+
+	private long getCreationDate() {
+		String created = properties.get("creationdate");
+		if (created != null) {
+			return TMUtils.getGMTtime(created);
+		}
+		return -1l;
+	}
+
+	@Override
+	public boolean equals(Object obj) {
+		if (obj instanceof Match m) {
+			return id.equals(m.getId()) && source.equals(m.getSource()) && target.equals(m.getTarget())
+					&& similarity == m.getSimilarity() && origin.equals(m.getOrigin())
+					&& properties.equals(m.getProperties());
+		}
+		return false;
+	}
+
+	@Override
+	public int hashCode() {
+		return source.hashCode() * target.hashCode() * similarity * origin.hashCode() * properties.hashCode();
+	}
+
+}

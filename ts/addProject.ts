@@ -1,0 +1,389 @@
+/*******************************************************************************
+ * Copyright (c) 2007-2026 Maxprograms.
+ *
+ * This program and the accompanying materials
+ * are made available under the terms of the Eclipse Public License 1.0
+ * which accompanies this distribution, and is available at
+ * https://www.eclipse.org/org/documents/epl-v10.html
+ *
+ * Contributors:
+ *     Maxprograms - initial API and implementation
+ *******************************************************************************/
+
+import { ipcRenderer, IpcRendererEvent } from "electron";
+import { Language } from "typesbcp47";
+import { FileInfo } from "./fileInfo.js";
+
+export class AddProject {
+
+    addedFiles: Map<number, FileInfo>;
+
+    charsetOptions: string = '';
+    typesOption: string = '';
+
+    memSelect: HTMLSelectElement;
+    glossSelect: HTMLSelectElement;
+
+    homeFolder: string = '';
+
+    constructor() {
+        this.memSelect = document.getElementById('memorySelect') as HTMLSelectElement;
+        this.glossSelect = document.getElementById('glossarySelect') as HTMLSelectElement;
+
+        this.addedFiles = new Map<number, FileInfo>();
+        ipcRenderer.send('get-theme');
+        ipcRenderer.on('set-theme', (event: IpcRendererEvent, theme: string) => {
+            (document.getElementById('theme') as HTMLLinkElement).href = theme;
+        });
+        ipcRenderer.send('get-clients');
+        ipcRenderer.on('set-clients', (event: IpcRendererEvent, clients: string[]) => {
+            this.setClients(clients);
+        });
+        ipcRenderer.send('get-subjects');
+        ipcRenderer.on('set-subjects', (event: IpcRendererEvent, subjects: string[]) => {
+            this.setSubjects(subjects);
+        });
+        ipcRenderer.send('get-languages');
+        ipcRenderer.on('set-languages', (event: IpcRendererEvent, arg: any) => {
+            this.setLanguages(arg);
+        });
+        ipcRenderer.send('get-source-files');
+        ipcRenderer.on('add-source-files', (event: IpcRendererEvent, files: FileInfo[]) => {
+            this.addFiles(files);
+        });
+        ipcRenderer.send('get-types');
+        ipcRenderer.on('set-types', (event: IpcRendererEvent, arg: any) => {
+            this.setTypes(arg);
+        });
+        ipcRenderer.send('get-charsets');
+        ipcRenderer.on('set-charsets', (event: IpcRendererEvent, arg: any) => {
+            this.setCharsets(arg);
+        });
+        ipcRenderer.send('get-memories');
+        ipcRenderer.on('set-memories', (event: IpcRendererEvent, arg: any) => {
+            this.setMemories(arg);
+        });
+        ipcRenderer.send('get-glossaries');
+        ipcRenderer.on('set-glossaries', (event: IpcRendererEvent, arg: any) => {
+            this.setGlossaries(arg);
+        });
+        document.addEventListener('keydown', (event: KeyboardEvent) => {
+            if (event.code === 'Enter' || event.code === 'NumpadEnter') {
+                this.addProject();
+            }
+            if (event.code === 'Escape') {
+                ipcRenderer.send('close-addProject');
+            }
+        });
+        (document.getElementById('addFilesButton') as HTMLButtonElement).addEventListener('click', () => {
+            ipcRenderer.send('select-source-files');
+            (document.getElementById('addFilesButton') as HTMLButtonElement).blur();
+        });
+        (document.getElementById('addProjectButton') as HTMLButtonElement).addEventListener('click', () => {
+            this.addProject();
+        });
+        (document.getElementById('nameInput') as HTMLInputElement).focus();
+        ipcRenderer.send('get-home');
+        ipcRenderer.on('set-home', (event: IpcRendererEvent, arg: any) => {
+            this.homeFolder = arg;
+        });
+        setTimeout(() => {
+            ipcRenderer.send('set-height', { window: 'addProject', width: document.body.clientWidth, height: document.body.clientHeight });
+        }, 200);
+    }
+
+    addProject(): void {
+        let name: string = (document.getElementById('nameInput') as HTMLInputElement).value;
+        if (name === '') {
+            ipcRenderer.send('show-message', { type: 'warning', message: 'Enter name', parent: 'addProject' });
+            return;
+        }
+        let length = this.addedFiles.size;
+        if (length === 0) {
+            ipcRenderer.send('show-message', { type: 'warning', message: 'Add files', parent: 'addProject' });
+            return;
+        }
+        let error = '';
+        this.addedFiles.forEach((a) => {
+            if (a.type === 'none' || a.type === 'Unknown') {
+                error = 'Select file types';
+            }
+            if (a.encoding === 'none' || a.encoding === 'Unknown') {
+                error = 'Select character sets';
+            }
+        });
+        if (error !== '') {
+            ipcRenderer.send('show-message', { type: 'warning', message: error, parent: 'addProject' });
+            return;
+        }
+        let subject: string = (document.getElementById('subjectInput') as HTMLInputElement).value;
+        let client: string = (document.getElementById('clientInput') as HTMLInputElement).value;
+        let srcLang: string = (document.getElementById('srcLangSelect') as HTMLSelectElement).value;
+        if (srcLang === 'none') {
+            ipcRenderer.send('show-message', { type: 'warning', message: 'Select source language', parent: 'addProject' });
+            return;
+        }
+        let tgtLang: string = (document.getElementById('tgtLangSelect') as HTMLSelectElement).value;
+        if (tgtLang === 'none') {
+            ipcRenderer.send('show-message', { type: 'warning', message: 'Select target language', parent: 'addProject' });
+            return;
+        }
+        let memory: string = this.memSelect.value;
+        let applyTM: boolean = (document.getElementById('applyTM') as HTMLInputElement).checked;
+        if (applyTM && memory === 'none') {
+            ipcRenderer.send('show-message', { type: 'warning', message: 'Select memory', parent: 'addProject' });
+            return;
+        }
+        let glossary: string = this.glossSelect.value;
+        let searchTerms: boolean = (document.getElementById('searchTerms') as HTMLInputElement).checked;
+        if (searchTerms && glossary === 'none') {
+            ipcRenderer.send('show-message', { type: 'warning', message: 'Select glossary', parent: 'addProject' });
+            return;
+        }
+
+        let array: FileInfo[] = [];
+        this.addedFiles.forEach((a) => {
+            array.push(a)
+        });
+
+        let params: any = {
+            description: name,
+            files: array,
+            subject: subject,
+            client: client,
+            srcLang: srcLang,
+            tgtLang: tgtLang,
+            memory: memory,
+            applyTM: applyTM,
+            glossary: glossary,
+            searchTerms: searchTerms,
+            from: 'addProject'
+        }
+        ipcRenderer.send('create-project', params);
+    }
+
+    setClients(clients: string[]): void {
+        let options: string = '';
+        let length: number = clients.length;
+        for (let i = 0; i < length; i++) {
+            options = options + '<option value="' + clients[i] + '">' + clients[i] + '</option>';
+        }
+        (document.getElementById('clients') as HTMLDataListElement).innerHTML = options;
+    }
+
+    setSubjects(subjects: string[]): void {
+        let options: string = '';
+        for (let subject of subjects) {
+            options = options + '<option value="' + subject + '">' + subject + '</option>';
+        }
+        (document.getElementById('subjects') as HTMLDataListElement).innerHTML = options;
+    }
+
+    setLanguages(arg: any): void {
+        let array: Language[] = arg.languages;
+        let languageOptions: string = '<option value="none">Select Language</option>';
+        for (let lang of array) {
+            languageOptions = languageOptions + '<option value="' + lang.code + '">' + lang.description + '</option>';
+        }
+        (document.getElementById('srcLangSelect') as HTMLSelectElement).innerHTML = languageOptions;
+        (document.getElementById('srcLangSelect') as HTMLSelectElement).value = arg.srcLang;
+        (document.getElementById('tgtLangSelect') as HTMLSelectElement).innerHTML = languageOptions;
+        (document.getElementById('tgtLangSelect') as HTMLSelectElement).value = arg.tgtLang;
+    }
+
+    addFiles(files: FileInfo[]): void {
+        let length: number = files.length;
+        for (let i = 0; i < length; i++) {
+            let file: FileInfo = files[i];
+            let hash: number = this.hashCode(file.file);
+            if (!this.addedFiles.has(hash)) {
+                this.addedFiles.set(hash, file);
+            }
+        }
+        let tableBody: HTMLTableSectionElement = document.getElementById('tableBody') as HTMLTableSectionElement;
+        tableBody.innerHTML = '';
+        let commonStart: string = this.commonPrefix();
+        let loadedFiles: FileInfo[] = [];
+        for (let value of this.addedFiles.values()) {
+            loadedFiles.push(value);
+        }
+        loadedFiles.sort((a, b) => {
+            if (a.file < b.file) {
+                return -1;
+            }
+            if (a.file > b.file) {
+                return 1;
+            }
+            return 0;
+        });
+        for (let file of loadedFiles) {
+            let hash: number = this.hashCode(file.file);
+            let tr: HTMLTableRowElement = document.createElement('tr');
+            tr.id = '' + hash;
+
+            let td: HTMLTableCellElement = document.createElement('td');
+            let remove: HTMLAnchorElement = document.createElement('a');
+            remove.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" height="20px" viewBox="0 -960 960 960" width="20px"><path d="m400-325 80-80 80 80 51-51-80-80 80-80-51-51-80 80-80-80-51 51 80 80-80 80 51 51Zm-88 181q-29.7 0-50.85-21.15Q240-186.3 240-216v-480h-48v-72h192v-48h192v48h192v72h-48v479.57Q720-186 698.85-165T648-144H312Zm336-552H312v480h336v-480Zm-336 0v480-480Z"/></svg>' +
+                '<span class="tooltiptext bottomTooltip">Remove File</span>';
+            remove.className = 'tooltip bottomTooltip';
+            remove.addEventListener('click', () => {
+                this.deleteFiles('' + hash);
+            });
+            remove.setAttribute('data', '' + hash);
+            td.appendChild(remove);
+            tr.appendChild(td);
+
+            td = document.createElement('td');
+            td.className = 'noWrap';
+            td.style.overflowX = 'hidden';
+
+            let fileName: string = file.file;
+            if (fileName.length > commonStart.length) {
+                fileName = fileName.substring(commonStart.length - 1);
+            }
+            if (fileName.length > 50 && (file.file.indexOf('/') != -1 || fileName.indexOf('\\') != -1)) {
+                let f = fileName.replace(this.homeFolder, '~');
+                td.innerText = f.substring(0, 5) + ' ... ' + f.substring(f.length - 35);
+            } else {
+                td.innerText = fileName;
+            }
+            td.title = file.file;
+            tr.appendChild(td);
+
+            td = document.createElement('td');
+            let typeSelect: HTMLSelectElement = document.createElement('select');
+            typeSelect.innerHTML = this.typesOption;
+            if (file.type !== 'Unknown') {
+                typeSelect.value = file.type;
+            } else {
+                typeSelect.value = 'none';
+            }
+            typeSelect.addEventListener('change', (event: Event) => {
+                let value: string = (event.currentTarget as HTMLSelectElement).value;
+                let fileInfo: FileInfo | undefined = this.addedFiles.get(hash);
+                if (fileInfo) {
+                    fileInfo.type = value;
+                    this.addedFiles.set(hash, fileInfo);
+                }
+            });
+            td.appendChild(typeSelect);
+            tr.appendChild(td);
+
+            td = document.createElement('td');
+            let charsetSelect: HTMLSelectElement = document.createElement('select');
+            charsetSelect.innerHTML = this.charsetOptions;
+            if (file.encoding !== 'Unknown') {
+                charsetSelect.value = file.encoding;
+            } else {
+                charsetSelect.value = 'none';
+            }
+            charsetSelect.addEventListener('change', (event: Event) => {
+                let value: string = (event.currentTarget as HTMLSelectElement).value;
+                let fileInfo: FileInfo | undefined = this.addedFiles.get(hash);
+                if (fileInfo) {
+                    fileInfo.encoding = value;
+                    this.addedFiles.set(hash, fileInfo);
+                }
+            });
+            td.appendChild(charsetSelect);
+            tr.appendChild(td);
+
+            tableBody.appendChild(tr);
+        }
+    }
+
+    commonPrefix(): string {
+        let filesList: FileInfo[] = [];
+        for (let value of this.addedFiles.values()) {
+            filesList.push(value);
+        }
+        let commonStart: string = filesList[0].file;
+        for (let i = 1; i < filesList.length; i++) {
+            let file: string = filesList[i].file;
+            let j: number = 0;
+            while (j < commonStart.length && j < file.length && commonStart.charAt(j) === file.charAt(j)) {
+                j++;
+            }
+            commonStart = commonStart.substring(0, j);
+        }
+        return commonStart;
+    }
+
+    deleteFiles(data: string): void {
+        let tableBody: HTMLTableSectionElement = document.getElementById('tableBody') as HTMLTableSectionElement;
+        this.addedFiles.delete(Number.parseInt(data, 10));
+        tableBody.removeChild(document.getElementById(data) as HTMLTableRowElement);
+    }
+
+    hashCode(str: string): number {
+        return str.split('').reduce((prevHash, currVal) =>
+            (((prevHash << 5) - prevHash) + currVal.charCodeAt(0)) | 0, 0);
+    }
+
+    pad(value: number): string {
+        if (value < 10) {
+            return '0' + value;
+        }
+        return '' + value;
+    }
+
+    setTypes(arg: any): void {
+        this.typesOption = '<option value="none" class="error">Select Type</option>';
+        let length: number = arg.formats.length;
+        for (let i = 0; i < length; i++) {
+            this.typesOption = this.typesOption + '<option value="' + arg.formats[i].code + '">' + arg.formats[i].description + '</option>';
+        }
+    }
+
+    setCharsets(arg: any): void {
+        this.charsetOptions = '<option value="none" class="error">Select Charset</option>';
+        let length: number = arg.charsets.length;
+        for (let i = 0; i < length; i++) {
+            this.charsetOptions = this.charsetOptions + '<option value="' + arg.charsets[i].code + '">' + arg.charsets[i].description + '</option>';
+        }
+    }
+
+    setMemories(memories: any[]): void {
+        if (memories.length === 0) {
+            this.memSelect.innerHTML = '<option value="none" class="error">-- No Memory --</option>';
+            return;
+        }
+        let options = '<option value="none" class="error">-- Select Memory --</option>';
+        memories.sort((a, b) => {
+            if (a.name.toLowerCase() < b.name.toLowerCase()) {
+                return -1;
+            }
+            if (a.name.toLowerCase() > b.name.toLowerCase()) {
+                return 1;
+            }
+            return 0;
+        });
+        let length = memories.length;
+        for (let i = 0; i < length; i++) {
+            options = options + '<option value="' + memories[i].id + '">' + memories[i].name + '</option>';
+        }
+        this.memSelect.innerHTML = options;
+    }
+
+    setGlossaries(glossaries: any[]): void {
+        if (glossaries.length === 0) {
+            this.glossSelect.innerHTML = '<option value="none" class="error">-- No Glossary --</option>';
+            return;
+        }
+        let options: string = '<option value="none" class="error">-- Select Glossary --</option>';
+        glossaries.sort((a, b) => {
+            if (a.name.toLowerCase() < b.name.toLowerCase()) {
+                return -1;
+            }
+            if (a.name.toLowerCase() > b.name.toLowerCase()) {
+                return 1;
+            }
+            return 0;
+        });
+        let length: number = glossaries.length;
+        for (let i = 0; i < length; i++) {
+            options = options + '<option value="' + glossaries[i].id + '">' + glossaries[i].name + '</option>';
+        }
+        this.glossSelect.innerHTML = options;
+    }
+}
