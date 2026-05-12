@@ -1,28 +1,152 @@
 {
-    "name": "swordfish",
-    "productName": "Swordfish",
+    "name": "swordfish-edu",
+    "productName": "SwordfishEdu",
     "version": "5.20.2",
-    "description": "Swordfish Translation Editor",
+    "description": "SwordfishEdu - Translation Training Platform with AI Scoring",
     "main": "js/Swordfish.js",
     "type": "module",
     "scripts": {
         "build": "tsc",
-        "start": "npm run build && env -u ELECTRON_RUN_AS_NODE electron ."
+        "start": "npm run build && env -u ELECTRON_RUN_AS_NODE electron .",
+        "pack": "electron-builder --dir",
+        "dist": "electron-builder",
+        "dist:mac": "electron-builder --mac",
+        "dist:win": "electron-builder --win"
     },
     "author": {
-        "name": "Rodolfo M. Raya",
-        "email": "rmraya@maxprograms.com",
-        "url": "https://www.maxprograms.com"
+        "name": "Lingsong Xiong",
+        "url": "https://github.com/xionglingsong"
     },
-    "homepage": "https://www.maxprograms.com/products/swordfish.html",
+    "homepage": "https://github.com/xionglingsong/SwordfishEdu",
     "license": "EPL-1.0",
     "repository": {
         "type": "git",
-        "url": "https://github.com/maxprograms-com/Swordfish.git"
+        "url": "https://github.com/xionglingsong/SwordfishEdu.git"
+    },
+    "build": {
+        "appId": "com.swordfish.edu",
+        "productName": "SwordfishEdu",
+        "directories": {
+            "output": "pack"
+        },
+        "files": [
+            "js/**/*",
+            "html/**/*",
+            "css/**/*",
+            "images/**/*",
+            "fonts/**/*",
+            "node_modules/**/*",
+            "review/**/*",
+            "package.json"
+        ],
+        "extraResources": [
+            {
+                "from": "bin",
+                "to": "java/bin",
+                "filter": [
+                    "**/*"
+                ]
+            },
+            {
+                "from": "lib",
+                "to": "java/lib",
+                "filter": [
+                    "**/*"
+                ]
+            },
+            {
+                "from": "conf",
+                "to": "java/conf",
+                "filter": [
+                    "**/*"
+                ]
+            },
+            {
+                "from": "include",
+                "to": "java/include",
+                "filter": [
+                    "**/*"
+                ]
+            },
+            {
+                "from": "legal",
+                "to": "java/legal",
+                "filter": [
+                    "**/*"
+                ]
+            },
+            {
+                "from": "release",
+                "to": "java/release",
+                "filter": [
+                    "**/*"
+                ]
+            },
+            {
+                "from": "jars",
+                "to": "jars",
+                "filter": [
+                    "**/*.jar"
+                ]
+            }
+        ],
+        "mac": {
+            "category": "public.app-category.education",
+            "icon": "build/icon.icns",
+            "target": [
+                {
+                    "target": "dmg",
+                    "arch": [
+                        "x64"
+                    ]
+                }
+            ],
+            "hardenedRuntime": true,
+            "gatekeeperAssess": false
+        },
+        "dmg": {
+            "contents": [
+                {
+                    "x": 130,
+                    "y": 220
+                },
+                {
+                    "x": 410,
+                    "y": 220,
+                    "type": "link",
+                    "path": "/Applications"
+                }
+            ]
+        },
+        "win": {
+            "icon": "build/icon.png",
+            "target": [
+                {
+                    "target": "nsis",
+                    "arch": [
+                        "x64"
+                    ]
+                }
+            ]
+        },
+        "nsis": {
+            "oneClick": false,
+            "allowToChangeInstallationDirectory": true,
+            "installerIcon": "build/icon.png",
+            "uninstallerIcon": "build/icon.png",
+            "installerHeaderIcon": "build/icon.png"
+        },
+        "linux": {
+            "icon": "build/icon.png",
+            "target": [
+                "AppImage"
+            ]
+        }
     },
     "devDependencies": {
         "@types/marked": "^5.0.2",
         "electron": "^41.5.1",
+        "electron-builder": "^26.8.1",
         "typescript": "^6.0.2"
     },
     "dependencies": {
