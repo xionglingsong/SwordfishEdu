@@ -1,7 +1,7 @@
 {
     "name": "swordfish-edu",
     "productName": "SwordfishEdu",
-    "version": "5.20.2",
+    "version": "1.1.0",
     "description": "SwordfishEdu - Translation Training Platform with AI Scoring",
     "main": "js/Swordfish.js",
     "type": "module",
