@@ -100,6 +100,11 @@ export class PreferencesDialog {
     doubaoModel: HTMLInputElement = document.createElement('input');
     doubaoFixTags: HTMLInputElement = document.createElement('input');
 
+    enableDeepseek: HTMLInputElement = document.createElement('input');
+    deepseekKey: HTMLInputElement = document.createElement('input');
+    deepseekModel: HTMLInputElement = document.createElement('input');
+    deepseekFixTags: HTMLInputElement = document.createElement('input');
+
     defaultEnglish: HTMLSelectElement = document.createElement('select');
     defaultPortuguese: HTMLSelectElement = document.createElement('select');
     defaultSpanish: HTMLSelectElement = document.createElement('select');
@@ -181,7 +186,7 @@ export class PreferencesDialog {
         ipcRenderer.on('set-preferences', (event: IpcRendererEvent, preferences: any) => {
             this.setPreferences(preferences);
         });
-        ipcRenderer.on('set-ai-models', (event: IpcRendererEvent, models: { ChatGPT?: string[], Claude?: string[], Mistral?: string[], Gemini?: string[], Qwen?: string[], GLM?: string[], Doubao?: string[], DoubaoCoding?: string[] }) => {
+        ipcRenderer.on('set-ai-models', (event: IpcRendererEvent, models: { ChatGPT?: string[], Claude?: string[], Mistral?: string[], Gemini?: string[], Qwen?: string[], GLM?: string[], Doubao?: string[], DoubaoCoding?: string[], DeepSeek?: string[] }) => {
             this.applyModelSuggestions(models);
         });
         ipcRenderer.on('ai-models-error', () => {
@@ -401,6 +406,19 @@ export class PreferencesDialog {
             this.doubaoFixTags.disabled = !this.enableDoubao.checked;
         });
 
+        this.enableDeepseek.checked = preferences.deepseek.enabled;
+        this.deepseekKey.value = preferences.deepseek.apiKey;
+        this.deepseekModel.value = preferences.deepseek.model;
+        this.deepseekKey.disabled = !preferences.deepseek.enabled;
+        this.deepseekModel.disabled = !preferences.deepseek.enabled;
+        this.deepseekFixTags.checked = preferences.deepseek.fixTags;
+        this.deepseekFixTags.disabled = !preferences.deepseek.enabled;
+        this.enableDeepseek.addEventListener('change', () => {
+            this.deepseekKey.disabled = !this.enableDeepseek.checked;
+            this.deepseekModel.disabled = !this.enableDeepseek.checked;
+            this.deepseekFixTags.disabled = !this.enableDeepseek.checked;
+        });
+
         this.enableModernmt.checked = preferences.modernmt.enabled;
         this.modernmtKey.value = preferences.modernmt.apiKey;
         this.modernmtSrcLang.value = preferences.modernmt.srcLang;
@@ -490,6 +508,14 @@ export class PreferencesDialog {
         }
         if (this.enableDoubao.checked && this.doubaoModel.value === '') {
             ipcRenderer.send('show-message', { type: 'warning', message: 'Enter Doubao model', parent: 'preferences' });
+            return;
+        }
+        if (this.enableDeepseek.checked && this.deepseekKey.value === '') {
+            ipcRenderer.send('show-message', { type: 'warning', message: 'Enter DeepSeek API key', parent: 'preferences' });
+            return;
+        }
+        if (this.enableDeepseek.checked && this.deepseekModel.value === '') {
+            ipcRenderer.send('show-message', { type: 'warning', message: 'Enter DeepSeek model', parent: 'preferences' });
             return;
         }
         if (this.enableMistral.checked && this.mistralKey.value === '') {
@@ -606,6 +632,12 @@ export class PreferencesDialog {
                 endpoint: this.doubaoEndpoint.value,
                 model: this.doubaoModel.value,
                 fixTags: this.doubaoFixTags.checked
+            },
+            deepseek: {
+                enabled: this.enableDeepseek.checked,
+                apiKey: this.deepseekKey.value,
+                model: this.deepseekModel.value,
+                fixTags: this.deepseekFixTags.checked
             },
             modernmt: {
                 enabled: this.enableModernmt.checked,
@@ -1469,6 +1501,25 @@ export class PreferencesDialog {
         radioRow.classList.add('middle');
         leftSide.appendChild(radioRow);
 
+        let deepseekRadio: HTMLInputElement = document.createElement('input');
+        deepseekRadio.type = 'radio';
+        deepseekRadio.name = 'mtProvider';
+        deepseekRadio.id = 'deepseekRadio';
+        deepseekRadio.style.margin = '4px';
+        radioRow.appendChild(deepseekRadio);
+
+        let deepseekLabel: HTMLLabelElement = document.createElement('label');
+        deepseekLabel.setAttribute('for', 'deepseekRadio');
+        deepseekLabel.innerText = 'DeepSeek';
+        deepseekLabel.style.marginTop = '4px';
+        deepseekLabel.classList.add('noWrap');
+        radioRow.appendChild(deepseekLabel);
+
+        radioRow = document.createElement('div');
+        radioRow.classList.add('row');
+        radioRow.classList.add('middle');
+        leftSide.appendChild(radioRow);
+
         let anthropicRadio: HTMLInputElement = document.createElement('input');
         anthropicRadio.type = 'radio';
         anthropicRadio.name = 'mtProvider';
@@ -1572,6 +1623,12 @@ export class PreferencesDialog {
         rightSide.appendChild(doubaoTab);
         this.populateDoubaoTab(doubaoTab);
 
+        let deepseekTab: HTMLDivElement = document.createElement('div');
+        deepseekTab.id = 'deepseekTab';
+        deepseekTab.style.display = 'none';
+        rightSide.appendChild(deepseekTab);
+        this.populateDeepseekTab(deepseekTab);
+
         let anthropicTab: HTMLDivElement = document.createElement('div');
         anthropicTab.id = 'anthropicTab';
         anthropicTab.style.display = 'none';
@@ -1622,6 +1679,10 @@ export class PreferencesDialog {
             console.log('show Doubao tab');
             this.toggleTab('doubaoTab');
         });
+        deepseekRadio.addEventListener('change', () => {
+            console.log('show DeepSeek tab');
+            this.toggleTab('deepseekTab');
+        });
         anthropicRadio.addEventListener('change', () => {
             console.log('show anthropic tab');
             this.toggleTab('anthropicTab');
@@ -1638,7 +1699,7 @@ export class PreferencesDialog {
 
     toggleTab(tabId: string): void {
         const tabs: string[] = ['googleTab', 'azureTab', 'deeplTab',
-            'chatGptTab', 'mistralTab', 'qwenTab', 'glmTab', 'doubaoTab', 'anthropicTab', 'geminiTab', 'modernmtTab'];
+            'chatGptTab', 'mistralTab', 'qwenTab', 'glmTab', 'doubaoTab', 'deepseekTab', 'anthropicTab', 'geminiTab', 'modernmtTab'];
         tabs.forEach((id) => {
             const tab = document.getElementById(id);
             if (tab) {
@@ -1914,6 +1975,7 @@ export class PreferencesDialog {
                 this.qwenFixTags.checked = false;
                 this.glmFixTags.checked = false;
                 this.doubaoFixTags.checked = false;
+                this.deepseekFixTags.checked = false;
             }
         });
         tagsRow.appendChild(this.chatGptFixTags);
@@ -1997,6 +2059,7 @@ export class PreferencesDialog {
                 this.qwenFixTags.checked = false;
                 this.glmFixTags.checked = false;
                 this.doubaoFixTags.checked = false;
+                this.deepseekFixTags.checked = false;
             }
         });
         tagsRow.appendChild(this.mistralFixTags);
@@ -2100,6 +2163,7 @@ export class PreferencesDialog {
                 this.geminiFixTags.checked = false;
                 this.glmFixTags.checked = false;
                 this.doubaoFixTags.checked = false;
+                this.deepseekFixTags.checked = false;
             }
         });
         tagsRow.appendChild(this.qwenFixTags);
@@ -2213,6 +2277,7 @@ export class PreferencesDialog {
                 this.geminiFixTags.checked = false;
                 this.qwenFixTags.checked = false;
                 this.doubaoFixTags.checked = false;
+                this.deepseekFixTags.checked = false;
             }
         });
         tagsRow.appendChild(this.glmFixTags);
@@ -2330,6 +2395,7 @@ export class PreferencesDialog {
                 this.geminiFixTags.checked = false;
                 this.qwenFixTags.checked = false;
                 this.glmFixTags.checked = false;
+                this.deepseekFixTags.checked = false;
             }
         });
         tagsRow.appendChild(this.doubaoFixTags);
@@ -2343,6 +2409,102 @@ export class PreferencesDialog {
         this.enableDoubao = document.getElementById('enableDoubao') as HTMLInputElement;
         this.doubaoKey = document.getElementById('doubaoKey') as HTMLInputElement;
         this.doubaoModel = document.getElementById('doubaoModel') as HTMLInputElement;
+    }
+
+    populateDeepseekTab(container: HTMLDivElement): void {
+        container.style.paddingTop = '10px';
+
+        let deepseekDiv: HTMLDivElement = document.createElement('div');
+        deepseekDiv.classList.add('middle');
+        deepseekDiv.classList.add('row');
+        deepseekDiv.style.paddingLeft = '4px';
+        deepseekDiv.innerHTML = '<input type="checkbox" id="enableDeepseek"><label for="enableDeepseek" style="padding-top:4px;">Enable DeepSeek Translation</label>';
+        container.appendChild(deepseekDiv);
+
+        let infoTable: HTMLTableElement = document.createElement('table');
+        infoTable.classList.add('fill_width');
+        container.appendChild(infoTable);
+
+        let tr: HTMLTableRowElement = document.createElement('tr');
+        infoTable.appendChild(tr);
+
+        let td: HTMLTableCellElement = document.createElement('td');
+        td.classList.add('middle');
+        td.classList.add('noWrap');
+        td.innerHTML = '<label for="deepseekKey">API Key</label>';
+        tr.appendChild(td);
+
+        td = document.createElement('td');
+        td.classList.add('middle');
+        td.classList.add('fill_width');
+        td.innerHTML = '<input type="text" id="deepseekKey" class="table_input"/>';
+        tr.appendChild(td);
+
+        tr = document.createElement('tr');
+        infoTable.appendChild(tr);
+
+        td = document.createElement('td');
+        td.classList.add('middle');
+        td.classList.add('noWrap');
+        td.innerHTML = '<label for="deepseekModel">DeepSeek Model</label>';
+        tr.appendChild(td);
+
+        td = document.createElement('td');
+        td.classList.add('middle');
+        td.classList.add('fill_width');
+
+        let deepseekModelInput: HTMLInputElement = document.createElement('input');
+        deepseekModelInput.type = 'text';
+        deepseekModelInput.id = 'deepseekModel';
+        deepseekModelInput.classList.add('table_input');
+        deepseekModelInput.setAttribute('list', 'deepseekModelsList');
+        td.appendChild(deepseekModelInput);
+
+        let deepseekModelLink: HTMLAnchorElement = document.createElement('a');
+        deepseekModelLink.href = '#';
+        deepseekModelLink.innerText = 'View Models';
+        deepseekModelLink.style.marginLeft = '8px';
+        deepseekModelLink.style.fontSize = '12px';
+        deepseekModelLink.addEventListener('click', (event: Event) => {
+            event.preventDefault();
+            ipcRenderer.send('open-link', 'https://api-docs.deepseek.com/zh-cn/quick_start/pricing');
+        });
+        td.appendChild(deepseekModelLink);
+        tr.appendChild(td);
+
+        let deepseekDatalist: HTMLDataListElement = document.createElement('datalist');
+        deepseekDatalist.id = 'deepseekModelsList';
+        container.appendChild(deepseekDatalist);
+
+        let tagsRow: HTMLDivElement = document.createElement('div');
+        tagsRow.classList.add('row');
+        tagsRow.classList.add('middle');
+        container.appendChild(tagsRow);
+
+        this.deepseekFixTags.id = 'deepseekFixTags';
+        this.deepseekFixTags.type = 'checkbox';
+        this.deepseekFixTags.addEventListener('change', () => {
+            if (this.deepseekFixTags.checked) {
+                this.chatGptFixTags.checked = false;
+                this.anthropicFixTags.checked = false;
+                this.mistralFixTags.checked = false;
+                this.geminiFixTags.checked = false;
+                this.qwenFixTags.checked = false;
+                this.glmFixTags.checked = false;
+                this.doubaoFixTags.checked = false;
+            }
+        });
+        tagsRow.appendChild(this.deepseekFixTags);
+
+        let fixLabel: HTMLLabelElement = document.createElement('label');
+        fixLabel.innerText = 'Use to Fix Tags';
+        fixLabel.setAttribute('for', 'deepseekFixTags');
+        fixLabel.style.paddingTop = '4px';
+        tagsRow.appendChild(fixLabel);
+
+        this.enableDeepseek = document.getElementById('enableDeepseek') as HTMLInputElement;
+        this.deepseekKey = document.getElementById('deepseekKey') as HTMLInputElement;
+        this.deepseekModel = document.getElementById('deepseekModel') as HTMLInputElement;
     }
 
     populateAnthropicTab(container: HTMLDivElement): void {
@@ -2407,6 +2569,7 @@ export class PreferencesDialog {
                 this.qwenFixTags.checked = false;
                 this.glmFixTags.checked = false;
                 this.doubaoFixTags.checked = false;
+                this.deepseekFixTags.checked = false;
             }
         });
 
@@ -2483,6 +2646,7 @@ export class PreferencesDialog {
                 this.qwenFixTags.checked = false;
                 this.glmFixTags.checked = false;
                 this.doubaoFixTags.checked = false;
+                this.deepseekFixTags.checked = false;
             }
         });
 
@@ -2570,7 +2734,7 @@ export class PreferencesDialog {
         ipcRenderer.send('get-ai-models');
     }
 
-    applyModelSuggestions(models: { ChatGPT?: string[], Claude?: string[], Mistral?: string[], Gemini?: string[], Qwen?: string[], GLM?: string[], Doubao?: string[], DoubaoCoding?: string[] }): void {
+    applyModelSuggestions(models: { ChatGPT?: string[], Claude?: string[], Mistral?: string[], Gemini?: string[], Qwen?: string[], GLM?: string[], Doubao?: string[], DoubaoCoding?: string[], DeepSeek?: string[] }): void {
         this.modelSuggestionsLoading = false;
         this.modelSuggestionsLoaded = true;
         this.populateModelList('chatGptModelsList', models.ChatGPT);
@@ -2583,6 +2747,7 @@ export class PreferencesDialog {
         this.doubaoCodingModels = models.DoubaoCoding || [];
         let listKey = this.doubaoEndpoint.value === 'coding' ? 'DoubaoCoding' : 'Doubao';
         this.populateDoubaoModelList(listKey);
+        this.populateModelList('deepseekModelsList', models.DeepSeek);
     }
 
     populateDoubaoModelList(listKey: string): void {

@@ -1141,9 +1141,9 @@ export class TranslationView {
     static SVG_SAVE_TM: string = '<svg xmlns="http://www.w3.org/2000/svg" height="24" viewBox="0 0 24 24" width="24"><path d="M19 12v7H5v-7H3v7c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2v-7h-2zm-6 .67l2.59-2.58L17 11.5l-5 5-5-5 1.41-1.41L11 12.67V3h2v9.67z"/></svg>';
 
     startScoringTimer(): void {
+        // Guard against double-call
+        this.stopScoringTimer();
         this.scoringElapsed = 0;
-        this.scoringQuoteIndex = Math.floor(Math.random() * TranslationView.MONTEREY_QUOTES.length);
-        let quoteDiv: HTMLElement | null = null;
 
         if (this.submitButton) {
             let parent = this.submitButton.parentElement;
@@ -1156,12 +1156,10 @@ export class TranslationView {
                 statusDiv.id = 'scoringStatus';
                 statusDiv.style.cssText = 'display:flex;align-items:center;flex:1;min-width:0;margin-left:10px;font-size:12px;';
 
-                let qDiv = document.createElement('span');
-                qDiv.id = 'scoringQuote';
-                qDiv.style.cssText = 'color:#888;font-style:italic;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0;transition:opacity 0.3s;';
-                qDiv.innerText = 'AI正在评分...';
-                statusDiv.appendChild(qDiv);
-                quoteDiv = qDiv;
+                let label = document.createElement('span');
+                label.style.cssText = 'color:#888;font-style:italic;white-space:nowrap;';
+                label.innerText = 'AI正在评分，详细报告已在新窗口中实时显示...';
+                statusDiv.appendChild(label);
 
                 let timerSpan = document.createElement('span');
                 timerSpan.id = 'scoringTimer';
@@ -1173,7 +1171,6 @@ export class TranslationView {
             }
         }
 
-        let quoteDivRef = quoteDiv;
         this.scoringTimer = setInterval(() => {
             this.scoringElapsed++;
             let timerEl = document.getElementById('scoringTimer');
@@ -1181,18 +1178,6 @@ export class TranslationView {
                 let min = Math.floor(this.scoringElapsed / 60);
                 let sec = this.scoringElapsed % 60;
                 timerEl.innerText = min > 0 ? min + ':' + (sec < 10 ? '0' : '') + sec : sec + 's';
-            }
-            if (this.scoringElapsed % 15 === 0) {
-                this.scoringQuoteIndex = (this.scoringQuoteIndex + 1) % TranslationView.MONTEREY_QUOTES.length;
-                if (quoteDivRef) {
-                    quoteDivRef.style.opacity = '0';
-                    setTimeout(() => {
-                        if (quoteDivRef) {
-                            quoteDivRef.innerText = TranslationView.MONTEREY_QUOTES[this.scoringQuoteIndex];
-                            quoteDivRef.style.opacity = '1';
-                        }
-                    }, 300);
-                }
             }
         }, 1000);
     }

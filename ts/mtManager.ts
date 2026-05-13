@@ -13,6 +13,7 @@
 import { AnthropicTranslator, AzureTranslator, ChatGPTTranslator, DeepLTranslator, GeminiTranslator, GoogleTranslator, MTEngine, MTMatch, MTUtils, MistralTranslator, ModernMTTranslator, QwenTranslator } from "mtengines";
 import { GlmTranslator } from "./GlmTranslator.js";
 import { DoubaoTranslator } from "./DoubaoTranslator.js";
+import { DeepSeekTranslator } from "./DeepSeekTranslator.js";
 import { Language, LanguageUtils } from "typesbcp47";
 import { SAXParser, XMLElement } from "typesxml";
 import { MTContentHandler } from "./mtContentHandler.js";
@@ -224,6 +225,15 @@ export class MTManager {
             this.mtEngines.push(doubaoTranslator);
             if (preferences.doubao.fixTags) {
                 this.tagFixer = doubaoTranslator;
+            }
+        }
+        if (preferences.deepseek.enabled) {
+            let deepseekTranslator: DeepSeekTranslator = new DeepSeekTranslator(preferences.deepseek.apiKey, 'general', preferences.deepseek.model);
+            deepseekTranslator.setSourceLanguage(srcLang);
+            deepseekTranslator.setTargetLanguage(tgtLang);
+            this.mtEngines.push(deepseekTranslator);
+            if (preferences.deepseek.fixTags) {
+                this.tagFixer = deepseekTranslator;
             }
         }
     }

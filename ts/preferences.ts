@@ -99,6 +99,12 @@ export interface Preferences {
         model: string;
         fixTags: boolean;
     };
+    deepseek: {
+        enabled: boolean;
+        apiKey: string;
+        model: string;
+        fixTags: boolean;
+    };
     spellchecker: {
         defaultEnglish: string;
         defaultPortuguese: string;

@@ -275,5 +275,9 @@
     "qwen-mt-flash",
     "qwen-mt-lite",
     "qwen-mt-turbo"
+  ],
+  "DeepSeek": [
+    "deepseek-v4-pro",
+    "deepseek-v4-flash"
   ]
 }

@@ -29,6 +29,7 @@ import { Project } from "./project.js";
 import { CommentReply, ReviewComment } from "./reviewComments.js";
 import { FullId } from "./segmentId.js";
 import { Rect, Sizes } from "./windowSizes.js";
+import { validateScoringResult } from "./scoringSchema.js";
 
 export class Swordfish {
 
@@ -81,6 +82,8 @@ export class Swordfish {
     static webImportWindow: BrowserWindow;
     static clipboardImportWindow: BrowserWindow;
     static scoreReportWindow: BrowserWindow;
+    static streamingScoreWindow: BrowserWindow | null = null;
+    static streamBuffer: { content: string; reasoning: string } = { content: '', reasoning: '' };
 
     javapath: string = join(app.getAppPath(), 'bin', 'java');
 
@@ -172,6 +175,12 @@ export class Swordfish {
             apiKey: '',
             endpoint: 'general',
             model: 'doubao-seed-2-0-pro-260215',
+            fixTags: false
+        },
+        deepseek: {
+            enabled: false,
+            apiKey: '',
+            model: 'deepseek-v4-pro',
             fixTags: false
         },
         modernmt: {
@@ -408,6 +417,8 @@ export class Swordfish {
 - 先肯定优点，再指出问题，最后给出修改方案
 - overallAnalysis中每个分析点独占一行（用\\n分隔）
 - analysis中每点独占一行，不要堆砌
+- 中译英时，每个error必须填写iegsRule字段，引用IEGS具体规则名（如"IEGS Articles: 零冠词规则"），并在description中解释为何中文母语者容易犯此错
+- 对于severity>=4的错误，必须在testQuestion字段中提供一个不同于原文的新例句来测试学生是否理解规则，并在testAnswer中给出答案
 
 ## 多参考译文
 每段提供2种替代译法供学生参考：
@@ -453,9 +464,12 @@ export class Swordfish {
           "deduction": <扣分值>,
           "isRepeat": <true|false>,
           "impactScope": "<local局部|cohesion衔接|core核心，仅section=meaning时必填>",
-          "description": "<简述错误原因30字内>",
+          "iegsRule": "<仅中译英时必填：引用IEGS具体规则名，如'IEGS Articles: 零冠词规则'或'IEGS Verb Tenses: 状态动词不可用进行时'。其他语言对留空字符串>",
+          "description": "<简述错误原因。中译英时须包含：(1)违反了哪条英文规则 (2)中文母语者为何易犯此错。其他语言对30字内简述即可>",
           "original": "<学生译文中的错误片段>",
-          "suggested": "<修改后的表达>"
+          "suggested": "<修改后的表达>",
+          "testQuestion": "<可选。仅severity>=4时生成。用一个不同于原文的新例句测试学生是否理解该规则>",
+          "testAnswer": "<可选。自测题答案>"
         }
       ],
       "alternativeReferences": [
@@ -469,116 +483,180 @@ export class Swordfish {
     static IEGS_REFERENCE: string = `
 ## ATA中译英专项评分标准 (Into-English Grading Standards 2025)
 
-当目标语言为英文时，除通用ATA错误分类外，须参照以下ATA Into-English Grading Standards判定具体错误。
+当目标语言为英文时，除通用ATA错误分类外，**必须**参照以下ATA IEGS判定具体错误。
+评分时须在error的iegsRule字段中引用具体规则名（如"IEGS Articles: 零冠词规则"）。
+每个error的description须包含：(1)违反了哪条英文规则 (2)中文母语者为何易犯此错。
 
 ### Section 1 — 译入语规范 英文专项规则
 
-**冠词 Articles** (中文无冠词，是最常见错误源):
-- 定冠词the: 已提及/特定/唯一的名词(the government that passed the law)
-- 不定冠词a/an: 首次提及/泛指单数可数名词(a man was approaching)
-- 零冠词: 泛指复数(apples are yellow)、不可数名词(rice is white)、动名词(sleeping is a pleasure)
-- 缩略词冠词: 字母拼读加the(the UN, the FBI), 单词拼读不加(NATO, NASA)
-- 典型错误: "Government forbade actions"(缺the) / "The sleeping is important"(多余the) / "He asked her to bring a cat"(应the, 语境暗示特定猫)
+#### 冠词 Articles（中文无冠词系统 → 最高频错误源）
 
-**动词时态 Verb Tenses** (中文无时态变化):
-- 现在进行时: 正在发生的动作(I am taking a walk right now, 不可用I take a walk)
-- 现在完成时: 过去发生持续到现在，不可与具体过去时间连用(I have lived here for 5 years, 不可说I have lived here in 2020)
-- 过去完成时: 仅用于描述事件先后顺序(had eaten before she arrived)
-- 条件句时态序列:
-  Type0(事实): 现在时+现在时(If you heat it, ice turns to water)
-  Type1(可能): 现在时+将来时(If it rains, we will get wet, 不可If it will rain)
-  Type2(假设): 过去时+would(If I were(NOT was) rich, I would help)
-  Type3(反事实): 过去完成+would have(If I had studied, I would have passed)
-- 从句指将来用现在时: after he arrives(NOT after he will arrive)
+**定冠词 the**: 已提及/特定/唯一/由结构限定的名词。
+- The government forbade all such actions. (Acceptable) / Government forbade all such actions. (Error)
+- The romantic love is the subject of most songs. (Error, 形容词后抽象名词仍不加the)
 
-**逗号与标点 Commas & Punctuation** (中英文标点规则差异极大):
-- 两个独立子句须: 分号 / 逗号+连词 / 句号分开(仅用逗号=comma splice, 错误)
-- 逗号不可出现在主语和谓语之间(The high unemployment rates, remain → Error)
-- 插入语必须成对逗号(I learned, as a result, that... / I learned as a result, that... → Error)
-- however前后必须有标点(; however, 或 , however,)
-- 连续形容词用逗号(a young, beautiful woman)
-- 美式引号: 逗号和句号放引号内(the term "disaster," 不可 the term "disaster",)
-- 仅用双引号(不用«»或"")
-- 间接引语不用引号(He explained that he had missed his train, 不可 "he had missed")
+**不定冠词 a/an**: 首次提及/泛指单数可数名词。a/an virtually never用于不可数名词。
+- An apple can be red, green or yellow. (Acceptable, 泛指)
+- Someone is knocking; please answer a door. (Error, 应the, 语境暗示特定门)
 
-**主谓一致 Subject-Verb Agreement**:
-- 集体名词通常单数(The team was winning, 不可were, 除非强调个体行为)
-- The number of + 单数动词; A number of + 复数动词
-- 分数/百分比跟随名词: Two-thirds of the wine was / One-third of the respondents are
+**零冠词**: 泛指复数 / 不可数名词 / 动名词 / 抽象名词指概念时。
+- I like apples. / Rice is white. / Love makes the world go round. (All Acceptable)
+- I like the apples. / The rice is white. / The love makes... (All Error, 除非指特定事物)
 
-**关系代词与从句 Relative Pronouns**:
-- 限制性定语从句: that/who, 不加逗号, that可省略(作宾语时)
-- 非限制性定语从句: which/who/whom, 必须加逗号, 不可用that
-- whose可指人或物(the tree whose roots were damaged)
-- 限制性加逗号/非限制性不加逗号均为错误
+**特殊规则**:
+- the + 物种/发明/乐器单数: The cat is a mysterious creature. / Do you play the guitar?
+- 缩略词冠词: 字母拼读加the (the UN, the FBI); 单词拼读不加 (NATO, NASA, AIDS)
 
-**虚拟语气 Subjunctive**:
-- 反事实条件句: If I were(NOT was) rich
-- 命令虚拟语气: recommend that there be(NOT is) no further discussion / It is important that each member have(NOT has) a say
+**中国学生高频模式**:
+- 泛指单数可数名词"裸奔": "Cat is cute animal" → Error (须 A cat is a cute animal)
+- 独一无二角色/头衔: "He was elected the president" → Error (须 president, 唯一职位不加冠词)
+- 乐器漏the: "She plays piano" → Error (须 the piano)
 
-**平行结构 Parallel Construction**:
-- Electric cars are quiet, cause no pollution, and use no gasoline (不可 and gasoline is not used)
-- to earn a living, to take vacations, and to save (不可 and saving)
+#### 动词时态 Verb Tenses（中文无时态变化 → 第二高频错误源）
 
-**连字符 Hyphens**:
-- 复合修饰语前置连字符: a three-year-old child (不可three-years-old)
-- 后置不用: the child is three years old (不可three-years-old)
-- 消歧: heavy-metal detector(检测重金属) vs heavy metal detector(沉重的金属探测器)
+**现在进行时 = 真正的现在**（正在发生的动作/过程/近期计划）:
+- I am taking a walk right now. (Acceptable) / Right now I take a walk. (Error)
+- I am meeting with the teacher tomorrow at 10:00. (Acceptable, 近期计划)
 
-**大小写与格式**:
-- 标题: 实词大写虚词小写(Education in the Developing World)
-- 缩略词全大写(UNESCO, 不可Unesco); WHO(首字母大写) ≠ Who(疑问词, 影响意义)
-- 句首不可用数字(173 ballots → A total of 173 ballots)
-- 数字5位以上用逗号(11,000 不可 11000 或 11.000)
+**一般现在时 = 习惯/规律/普遍真理**:
+- We call our children almost every week. (Acceptable, 习惯)
+- He is getting up early every day. (Error, every day是习惯, 须用gets up)
+
+**状态动词不可用进行时**: know, believe, understand, want, need, love, like, dislike, fear, appreciate, have(拥有), be, belong, contain, hold, cost, weigh
+- I am believing in freedom of religion. (Error) / I am having five children. (Error)
+- 例外: She is having a hard time at work. (Acceptable, have = 经历)
+
+**现在完成时触发词**: never, ever, already, just, so far, since, for
+- I have never seen the ocean. (Acceptable) / I never saw the ocean. (Error, 无特定时间)
+- We have lived in Virginia since 1981. (Acceptable) / We lived in Virginia since 1981. (Error)
+
+**过去完成时**: 仅用于描述事件先后
+- I had already washed the dishes when she asked me to do so. (Acceptable)
+- I already washed the dishes when she asked me to do so. (Error)
+
+**条件句时态序列**:
+- Type 0 (事实): 现在时+现在时 — If you heat it, ice turns to water.
+- Type 1 (可能): 现在时+将来时 — If it rains, we will get wet. / If it will rain... (Error)
+- Type 2 (假设): 过去时+would — If I were(NOT was) rich, I would help.
+- Type 3 (反事实): 过去完成+would have — If I had studied, I would have passed.
+- Type 4 (过去条件+现在结果): 过去完成+would — If he had not been so greedy, he would be rich today.
+
+**将来时从句用现在时**: after he arrives (NOT after he will arrive)
+
+#### 逗号与标点 Commas & Punctuation（中英文标点规则差异极大）
+
+**Comma Splice（逗号连接独立子句）= 最常见标点错误**:
+- ...smoking less, teenagers have been smoking more. (Error, 逗号splice)
+- 正确: ...less; teenagers... 或 ...less, but teenagers... 或拆为两句
+- 中文流水句习惯 → 英文必须拆分或用适当连词
+
+**主语和谓语之间不可加逗号**（中文长主语后常加逗号，英文不可）:
+- The high unemployment rates that have prevailed in recent years, remain intractable. (Error)
+
+**however 必须有标点隔开**:
+- ; however, (Acceptable) / , however, (Acceptable) / however 裸用 (Error)
+
+**插入语必须成对逗号**:
+- I learned, as a result, that she was blind. (Acceptable)
+- I learned as a result, that she was blind. (Error, 单逗号)
+
+**引号**: 仅用双引号（«»、" " → Error）; 逗号句号放引号内; 间接引语不用引号
+
+#### 主谓一致 Subject-Verb Agreement（中文不随单复数变化）
+
+- 集体名词通常单数: The team was winning. (英式一律复数 → Error)
+- The number of + 单数; A number of + 复数
+- Everyone has their own opinion. (Acceptable) / Everyone have... (Error)
+
+#### 关系代词与从句 Relative Pronouns（中文无定语从句标点区分）
+
+**限制性（无逗号）vs 非限制性（有逗号）**:
+- People who live in glass houses should not throw stones. (Restrictive)
+- People, who depend on air, should not pollute it. (Nonrestrictive, 意为所有人)
+- 限制性加逗号 = 改变意义; 非限制性不加逗号 = Error
+
+**代词选择**: 限制性用that/who; 非限制性用which/who; 非限制性不可用that
+- who/whom 仅限人和拟人对象: The countries who are having problems. (Error)
+
+#### 虚拟语气 Subjunctive（中文用词汇手段表虚拟）
+
+**反事实 if → were**（所有主格）:
+- If I were rich, I would sail around the world. (Acceptable) / If I was rich... (Error)
+
+**非反事实 if → was**（表不确定性）:
+- If I was rude to you, I apologize. (Acceptable) / If I were rude... (Error)
+
+**命令虚拟语气**（recommend/demand/suggest/important + that + bare infinitive）:
+- He recommends that there be no further discussion. (Acceptable) / ...that there is no... (Error)
+
+#### 悬垂修饰语 Dangling Modifiers（中文常省主语 → 高频错误）
+
+分词/不定词短语必须逻辑修饰紧邻名词。逻辑主语不匹配 = Error。
+- To serve you better, please have identification available. (Error, 逻辑主语不匹配)
+- Repeatedly late to practice, the coach made the team stay until dark. (Error, coach没迟到)
+
+#### 短语动词 Phrasal Verbs（中文无此概念）
+
+动词+介词/副词组合有不可预测意义。用错介词/副词 = Error。
+- He was looking for his dog. (Acceptable) / He was looking after his dog. (Error, affecting meaning)
+- By the time she arrived, he had passed out. (Acceptable) / ...he had passed away. (Error, affecting meaning)
+
+#### 副词位置 Misplaced Adverbs（中文副词位置灵活）
+
+- The manager hired only six new workers. (Acceptable)
+- The manager only hired six new workers. (Error, 歧义)
+
+#### 缩写与首字母缩写
+
+- 头衔: Dr./Prof. + 姓名 → Acceptable; 单独使用不可
+- 缩略词: 全大写（UNESCO, 不可 Unesco）; 字母拼读加the (the UN); 单词拼读不加 (NATO)
+- 复数: 加小写s无撇号（UFOs → Acceptable; UFO's → Error）
+
+#### 平行结构 / 连字符 / 大小写
+
+- 平行: not only...but also / either...or / neither...nor 须平行
+- 连字符: 复合修饰语前置加 (a three-year-old child); 后置不加 (three years old)
+- 大小写: 标题实词大写; 句首不可用数字; 数字5位以上用逗号
 
 ### Section 2 — 意义传递 英文专项规则
 
-**指代清晰 Anaphora / Referents**:
-- 代词必须指代明确: "A man and a boy were waiting. He looked familiar." → Error(歧义)
-- 适度使用同义指代(elegant variation), 避免重复同一词也避免过多近义词
-- 不可用含主观判断的新名词回指(This manifestation of selfishness → Error, 除非前文已暗示)
+#### 指代清晰 Anaphora / Referents（中文零指代频繁 → 英文须补出）
 
-**同义词与假朋友 Cognates**:
-- 词典中某定义可用即可, 但主导含义不可造成歧义或扭曲原文
-- State control = 政府控制(歧义, 若原文指心理状态则Error affecting meaning)
+- 代词必须指代明确: A man and a boy were waiting. He looked familiar. (Error, 歧义)
+- 同义指代适度: Turkey... the country... there. (Acceptable); 过多近义词或完全重复 → Error
+- 不可引入含价值判断的新名词回指: This manifestation of selfishness... (Error)
 
-**习语翻译 Idioms**:
-- 不可直译源语言习语(hanging noodles on ears → Error)
-- 可用等效英文习语(pull the wool over eyes)或意译(dupe the electorate)
-- 直译后若语境可推断含义可宽容, 但造成歧义则扣分
+#### 同义词与假朋友 Cognates
 
-**被动语态 Passive Voice**:
-- 源文被动可译为英文被动或主动, 但不可添加原文未暗示的施事者
-- "My dog had been run over" ≠ "A car had run over my dog"(添加了原文没有的施事者→Error)
-- 过多被动致风格不当可扣分(如说明文本应用祈使句却全用被动)
+近义词可接受须满足: 词典有该定义 + 非非标准英语 + 语法正确 + 主导含义无歧义 + 不阻碍理解。
+- State control... 若原文指"心理状态的控制", 英文dominant sense = "政府控制" → Error affecting meaning.
 
-**人名地名 Names**:
-- 知名人名地名须用英文惯用形式(Moscow, 不可音译拼法)
-- 私企名称不可翻译(Bayerische Motoren Werke AG 不可译为 Bavarian Auto Works)
-- 政府机构须翻译(Ministero degli affari esteri → Ministry of Foreign Affairs, 不可保留原文)
-- 音译一致: 用音标则全文统一, 不可Bošković与Boskovic混用
+#### 习语翻译 Idioms
 
-**源文歧义处理**: 英文语法可能迫使选择(单复数、冠词、限制性/非限制性)。若语境可判断则须选对; 若无法判断, 给出benefit of the doubt。
+- 不可直译源语言习语: hanging noodles on the electorate's ears (Error)
+- 可用等效英文习语或意译: pull the wool over the electorate's eyes / dupe the electorate (Acceptable)
+- 习语语域须匹配原文: crappy weather (Error in formal text) / inclement weather (Acceptable)
+
+#### 被动语态 / 人名地名 / 源文歧义
+
+- 被动: 不可添加原文未暗示的施事者 (A car had run over my dog → Error)
+- 人名: 知名人名用惯用形式 (Moscow, Vienna); 私企名称不可翻译; 政府机构须翻译
+- 歧义: 中文不区分单复数/冠词/限制性 → 英文须选择; 无法判断时给予benefit of the doubt
 
 ### Section 3 — 行文质量 英文专项规则
 
-**语域 Register**:
-- 译文正式度须匹配原文和翻译指令
-- 学术文本不用缩写(you can't → Error in academic journal)
-- 口语化文本可适度使用(You can't judge → Acceptable in newspaper column)
-- 过度正式也是错误(Pursuant to his mother's instructions, Jeff gave the note → Error in casual context)
-- 术语选择须适合目标受众(hydrophobic dog → Error in general context; rabid dog → Acceptable)
+#### 语域 Register（中文礼貌标记/正式度不直接对应）
 
-**冗余 Redundancy**:
-- 适度冗余不扣分(absolutely perfect, old adage → Acceptable if source similar)
-- 源语言习惯性冗余可在译文中适当删减不扣分
-- "Both"有限定功能时不可省(Both suitcases exceeded → 不可Suitcases exceeded, 引入歧义)
+- 术语须适合目标受众: hydrophobic dog (Error in general context) / rabid dog (Acceptable)
+- 学术文本不用缩写: you can't (Error) / you cannot (Acceptable)
+- 过度正式也是错误: Pursuant to his mother's instructions, Jeff gave the note to his teacher. (Error)
 
-**非美式英语**: 基于美式英语。英式拼写/用法为错误(honour, in hospital, towards虽常见但可能扣分)
+#### 冗余 / 介词悬垂 / 非美式英语 / 句式结构
 
-**介词悬垂**: 一般可接受(What are you looking for?)但不可拆分习语动词(up with which I will not put → Error)
-
-**句式结构**: 源文流水句/逗号连接子句须拆分或用适当连词, 不可保留run-on结构
+- 冗余: 适度冗余不扣分; both有限定功能时不可省
+- 介词悬垂: 一般可接受 (What are you looking for?); 不可拆分习语动词
+- 非美式: 基于美式英语; 英式拼写/用法为错误 (honour → Error, in hospital → Error)
+- Run-on: 源文流水句须拆分或用适当连词; 融合句无标点/连词 → Error (He sings she dances.)
 `;
 
     static spellCheckerLanguages: string[];
@@ -1293,13 +1371,18 @@ export class Swordfish {
             Swordfish.showWebImport();
         });
         ipcMain.on('close-web-import', () => {
-            Swordfish.webImportWindow.close();
+            if (Swordfish.webImportWindow && !Swordfish.webImportWindow.isDestroyed()) {
+                Swordfish.webImportWindow.close();
+            }
         });
         ipcMain.on('preview-web-import', (event: IpcMainEvent, arg: any) => {
             Swordfish.previewWebImport(event, arg);
         });
         ipcMain.on('import-web', (event: IpcMainEvent, arg: any) => {
             Swordfish.importWeb(arg);
+        });
+        ipcMain.on('import-web-selected', (event: IpcMainEvent, arg: { projectName: string; srcLang: string; tgtLang: string; pairs: Array<{ source: string; target: string }> }) => {
+            Swordfish.importWebSelected(arg);
         });
         ipcMain.on('save-reflection', (event: IpcMainEvent, arg: any) => {
             Swordfish.saveReflection(arg);
@@ -1323,6 +1406,9 @@ export class Swordfish {
         });
         ipcMain.on('export-score-report-pdf', () => {
             Swordfish.exportScoreReportPdf();
+        });
+        ipcMain.on('re-score-segment', (event: IpcMainEvent, arg: any) => {
+            Swordfish.rescoreSegment(event, arg);
         });
         ipcMain.on('unconfirm-translations', (event: IpcMainEvent, arg: any) => {
             Swordfish.unconfirmTranslations(arg);
@@ -2187,6 +2273,10 @@ export class Swordfish {
                 }
                 if (!json.hasOwnProperty('doubao')) {
                     json.doubao = { enabled: false, apiKey: '', endpoint: 'general', model: 'doubao-seed-2-0-pro-260215', fixTags: false };
+                    needsSaving = true;
+                }
+                if (!json.hasOwnProperty('deepseek')) {
+                    json.deepseek = { enabled: false, apiKey: '', model: 'deepseek-v4-pro', fixTags: false };
                     needsSaving = true;
                 }
                 if (!json.hasOwnProperty('gemini')) {
@@ -6540,6 +6630,7 @@ export class Swordfish {
         if (prefs.qwen.enabled) engines.push({ shortName: 'Qwen', name: 'Qwen' });
         if (prefs.glm.enabled) engines.push({ shortName: 'GLM', name: 'GLM' });
         if (prefs.doubao.enabled) engines.push({ shortName: 'Doubao', name: 'Doubao' });
+        if (prefs.deepseek.enabled) engines.push({ shortName: 'DeepSeek', name: 'DeepSeek' });
         event.sender.send('set-ai-engines', engines);
     }
 
@@ -6590,6 +6681,11 @@ export class Swordfish {
                     : 'https://ark.cn-beijing.volces.com/api/v3/chat/completions';
                 apiKey = prefs.doubao.apiKey;
                 model = prefs.doubao.model;
+                break;
+            case 'DeepSeek':
+                apiUrl = 'https://api.deepseek.com/chat/completions';
+                apiKey = prefs.deepseek.apiKey;
+                model = prefs.deepseek.model;
                 break;
             default:
                 event.sender.send('ai-chat-error', { error: 'Unknown engine: ' + arg.engine });
@@ -6917,7 +7013,7 @@ export class Swordfish {
             Swordfish.clipboardImportWindow.close();
         }
         Swordfish.mainWindow.webContents.send('start-waiting');
-        Swordfish.mainWindow.webContents.send('set-status', 'Importing Clipboard Exercise');
+        Swordfish.mainWindow.webContents.send('set-status', 'Importing Exercise');
 
         let importParams = {
             xliff: xliffPath,
@@ -6989,7 +7085,9 @@ export class Swordfish {
             }
             Swordfish.importFromSources(arg, sources, references);
         } catch (e: any) {
-            if (Swordfish.importCsvWindow && !Swordfish.importCsvWindow.isDestroyed()) {
+            if (Swordfish.webImportWindow && !Swordfish.webImportWindow.isDestroyed()) {
+                Swordfish.webImportWindow.close();
+            } else if (Swordfish.importCsvWindow && !Swordfish.importCsvWindow.isDestroyed()) {
                 Swordfish.importCsvWindow.close();
             }
             Swordfish.showMessage({ type: 'error', message: 'Error reading CSV: ' + e.message });
@@ -7245,7 +7343,7 @@ export class Swordfish {
         while ((match = cellRegex.exec(content)) !== null) {
             let text = match[1].trim();
             // Strip HTML tags and decode entities
-            text = text.replace(/<[^>]+>/g, '').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&nbsp;/g, ' ').replace(/&#\d+;/g, '');
+            text = text.replace(/<[^>]+>/g, '').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&nbsp;/g, ' ').replace(/&#x[0-9a-fA-F]+;/g, '').replace(/&#\d+;/g, '');
             if (text) cells.push(text);
         }
 
@@ -7266,18 +7364,34 @@ export class Swordfish {
         return url.replace(/-n\./, '-' + page + '.');
     }
 
-    static previewWebImport(event: IpcMainEvent, arg: { url: string; startPage: number }): void {
-        let url = Swordfish.resolvePageUrl(arg.url, arg.startPage);
-        Swordfish.fetchHtml(url).then((html: string) => {
-            let pairs = Swordfish.parseReciyiHtml(html);
-            let allRows: string[][] = [];
-            for (let pair of pairs) {
-                allRows.push([pair.source, pair.target]);
+    static previewWebImport(event: IpcMainEvent, arg: { url: string; startPage: number; endPage: number }): void {
+        let allRows: string[][] = [];
+        let totalPages = arg.endPage - arg.startPage + 1;
+
+        let fetchNext = (page: number): void => {
+            if (page > arg.endPage) {
+                event.sender.send('set-web-preview', allRows);
+                return;
             }
-            event.sender.send('set-web-preview', allRows);
-        }).catch((error: string) => {
-            event.sender.send('web-import-error', 'Failed to fetch page: ' + error);
-        });
+            if (Swordfish.webImportWindow && !Swordfish.webImportWindow.isDestroyed()) {
+                Swordfish.webImportWindow.webContents.send('web-import-progress', {
+                    current: page - arg.startPage + 1,
+                    total: totalPages
+                });
+            }
+            let url = Swordfish.resolvePageUrl(arg.url, page);
+            Swordfish.fetchHtml(url).then((html: string) => {
+                let pairs = Swordfish.parseReciyiHtml(html);
+                for (let pair of pairs) {
+                    allRows.push([pair.source, pair.target]);
+                }
+                fetchNext(page + 1);
+            }).catch((error: string) => {
+                event.sender.send('web-import-error', 'Failed to fetch page ' + page + ': ' + error);
+            });
+        };
+
+        fetchNext(arg.startPage);
     }
 
     static importWeb(arg: { projectName: string; url: string; startPage: number; endPage: number; srcLang: string; tgtLang: string }): void {
@@ -7290,12 +7404,14 @@ export class Swordfish {
             if (page > arg.endPage) {
                 // All pages fetched — write temp CSV and import
                 if (sources.length === 0) {
-                    Swordfish.webImportWindow.webContents.send('web-import-error', 'No bilingual pairs found');
+                    if (Swordfish.webImportWindow && !Swordfish.webImportWindow.isDestroyed()) {
+                        Swordfish.webImportWindow.webContents.send('web-import-error', 'No bilingual pairs found');
+                    }
                     return;
                 }
                 let csvContent = '';
                 for (let i = 0; i < sources.length; i++) {
-                    csvContent += sources[i].replace(/\t/g, ' ') + '\t' + references[i].replace(/\t/g, ' ') + '\n';
+                    csvContent += Swordfish.csvEscape(sources[i]) + '\t' + Swordfish.csvEscape(references[i]) + '\n';
                 }
                 let csvPath = join(app.getPath('temp'), 'web-import-' + Date.now() + '.csv');
                 writeFileSync(csvPath, csvContent, 'utf-8');
@@ -7326,11 +7442,41 @@ export class Swordfish {
                 }
                 fetchNext(page + 1);
             }).catch((error: string) => {
-                Swordfish.webImportWindow.webContents.send('web-import-error', 'Failed to fetch page ' + page + ': ' + error);
+                if (Swordfish.webImportWindow && !Swordfish.webImportWindow.isDestroyed()) {
+                    Swordfish.webImportWindow.webContents.send('web-import-error', 'Failed to fetch page ' + page + ': ' + error);
+                }
             });
         };
 
         fetchNext(arg.startPage);
+    }
+
+    static importWebSelected(arg: { projectName: string; srcLang: string; tgtLang: string; pairs: Array<{ source: string; target: string }> }): void {
+        if (arg.pairs.length === 0) {
+            if (Swordfish.webImportWindow && !Swordfish.webImportWindow.isDestroyed()) {
+                Swordfish.webImportWindow.webContents.send('web-import-error', 'No segments selected');
+            }
+            return;
+        }
+        let csvContent = '';
+        for (let pair of arg.pairs) {
+            csvContent += Swordfish.csvEscape(pair.source) + '\t' + Swordfish.csvEscape(pair.target) + '\n';
+        }
+        let csvPath = join(app.getPath('temp'), 'web-import-' + Date.now() + '.csv');
+        writeFileSync(csvPath, csvContent, 'utf-8');
+        Swordfish.importCsv({
+            projectName: arg.projectName,
+            filePath: csvPath,
+            srcLang: arg.srcLang,
+            tgtLang: arg.tgtLang
+        });
+    }
+
+    static csvEscape(s: string): string {
+        if (s.includes('"') || s.includes('\n') || s.includes('\r') || s.includes('\t')) {
+            return '"' + s.replace(/"/g, '""') + '"';
+        }
+        return s;
     }
 
     static getTrainingExercises(event: IpcMainEvent): void {
@@ -7413,6 +7559,18 @@ export class Swordfish {
         Swordfish.mainWindow.webContents.send('refresh-training');
     }
 
+    private static getScoringEngine(prefs: any): { apiUrl: string; apiKey: string; model: string; engine: string } {
+        if (prefs.chatGpt.enabled) return { apiUrl: 'https://api.openai.com/v1/chat/completions', apiKey: prefs.chatGpt.apiKey, model: prefs.chatGpt.model, engine: 'ChatGPT' };
+        if (prefs.anthropic.enabled) return { apiUrl: 'https://api.anthropic.com/v1/messages', apiKey: prefs.anthropic.apiKey, model: prefs.anthropic.model, engine: 'Claude' };
+        if (prefs.mistral.enabled) return { apiUrl: 'https://api.mistral.ai/v1/chat/completions', apiKey: prefs.mistral.apiKey, model: prefs.mistral.model, engine: 'Mistral' };
+        if (prefs.gemini.enabled) return { apiUrl: 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions', apiKey: prefs.gemini.apiKey, model: prefs.gemini.model, engine: 'Gemini' };
+        if (prefs.qwen.enabled) return { apiUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions', apiKey: prefs.qwen.apiKey, model: prefs.qwen.model, engine: 'Qwen' };
+        if (prefs.glm.enabled) return { apiKey: prefs.glm.apiKey, model: prefs.glm.model, engine: 'GLM', apiUrl: prefs.glm.endpoint === 'coding' ? 'https://open.bigmodel.cn/api/coding/paas/v4/chat/completions' : 'https://open.bigmodel.cn/api/paas/v4/chat/completions' };
+        if (prefs.doubao.enabled) return { apiKey: prefs.doubao.apiKey, model: prefs.doubao.model, engine: 'Doubao', apiUrl: prefs.doubao.endpoint === 'coding' ? 'https://ark.cn-beijing.volces.com/api/coding/v3/chat/completions' : 'https://ark.cn-beijing.volces.com/api/v3/chat/completions' };
+        if (prefs.deepseek.enabled) return { apiKey: prefs.deepseek.apiKey, model: prefs.deepseek.model, engine: 'DeepSeek', apiUrl: 'https://api.deepseek.com/chat/completions' };
+        return { apiUrl: '', apiKey: '', model: '', engine: '' };
+    }
+
     static scoreTranslation(event: IpcMainEvent, arg: { projectId: string; segments: { source: string; target: string }[]; srcLang: string; tgtLang: string }): void {
         let data = Swordfish.loadTrainingData();
         let exercise = data.exercises.find((ex: any) => ex.projectId === arg.projectId);
@@ -7422,19 +7580,7 @@ export class Swordfish {
         }
 
         let prefs = Swordfish.currentPreferences;
-        let apiUrl = '';
-        let apiKey = '';
-        let model = '';
-        let engine = '';
-
-        // Pick the first enabled engine
-        if (prefs.chatGpt.enabled) { apiUrl = 'https://api.openai.com/v1/chat/completions'; apiKey = prefs.chatGpt.apiKey; model = prefs.chatGpt.model; engine = 'ChatGPT'; }
-        else if (prefs.anthropic.enabled) { apiUrl = 'https://api.anthropic.com/v1/messages'; apiKey = prefs.anthropic.apiKey; model = prefs.anthropic.model; engine = 'Claude'; }
-        else if (prefs.mistral.enabled) { apiUrl = 'https://api.mistral.ai/v1/chat/completions'; apiKey = prefs.mistral.apiKey; model = prefs.mistral.model; engine = 'Mistral'; }
-        else if (prefs.gemini.enabled) { apiUrl = 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions'; apiKey = prefs.gemini.apiKey; model = prefs.gemini.model; engine = 'Gemini'; }
-        else if (prefs.qwen.enabled) { apiUrl = 'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions'; apiKey = prefs.qwen.apiKey; model = prefs.qwen.model; engine = 'Qwen'; }
-        else if (prefs.glm.enabled) { apiKey = prefs.glm.apiKey; model = prefs.glm.model; engine = 'GLM'; apiUrl = prefs.glm.endpoint === 'coding' ? 'https://open.bigmodel.cn/api/coding/paas/v4/chat/completions' : 'https://open.bigmodel.cn/api/paas/v4/chat/completions'; }
-        else if (prefs.doubao.enabled) { apiKey = prefs.doubao.apiKey; model = prefs.doubao.model; engine = 'Doubao'; apiUrl = prefs.doubao.endpoint === 'coding' ? 'https://ark.cn-beijing.volces.com/api/coding/v3/chat/completions' : 'https://ark.cn-beijing.volces.com/api/v3/chat/completions'; }
+        let { apiUrl, apiKey, model, engine } = Swordfish.getScoringEngine(prefs);
 
         if (!apiKey) {
             event.sender.send('score-error', { error: 'No LLM engine configured. Enable one in Preferences > Machine Translation.' });
@@ -7466,72 +7612,43 @@ export class Swordfish {
 
         let handleScoringResponse = (content: string): void => {
             let historyId = Swordfish.saveScoreToHistory(arg, exercise, content, engine);
-            let jsonStr = content.trim();
-            if (jsonStr.startsWith('```')) {
-                jsonStr = jsonStr.replace(/^```(?:json)?\s*/, '').replace(/\s*```$/, '');
-            }
-            try {
-                let structured = JSON.parse(jsonStr);
-                if (typeof structured.totalScore === 'number' && Array.isArray(structured.segments)) {
-                    // Normalize v2 fields
-                    if (structured.version === 2) {
-                        let defaults = { meaningTransfer: { max: 40 }, targetMechanics: { max: 30 }, writingQuality: { max: 30 } };
-                        if (!structured.subScores) structured.subScores = {};
-                        for (let key of Object.keys(defaults)) {
-                            if (!structured.subScores[key]) {
-                                structured.subScores[key] = { score: 0, max: defaults[key as keyof typeof defaults].max, label: key, errorPoints: 0 };
-                            }
-                        }
-                        if (!structured.errorPoints) structured.errorPoints = 0;
-                        if (!structured.qualityPoints) structured.qualityPoints = 0;
-                        if (!structured.qualityHighlights) structured.qualityHighlights = [];
-                        if (!structured.overallAnalysis && structured.overallComment) {
-                            structured.overallAnalysis = structured.overallComment;
-                        }
-                    }
-                    for (let seg of structured.segments) {
-                        if (!seg.errors) seg.errors = [];
-                        if (!seg.alternativeReferences) seg.alternativeReferences = [];
-                    }
-                    // Normalize per-segment subScores: distribute top-level max across segments
-                    if (structured.version === 2 && structured.segments.length > 0 && structured.subScores) {
-                        let segCount = structured.segments.length;
-                        let topMax: Record<string, number> = {};
-                        for (let key of ['meaningTransfer', 'targetMechanics', 'writingQuality'] as const) {
-                            topMax[key] = structured.subScores[key] ? structured.subScores[key].max : (key === 'meaningTransfer' ? 40 : 30);
-                        }
-                        for (let seg of structured.segments) {
-                            if (!seg.subScores) continue;
-                            for (let key of ['meaningTransfer', 'targetMechanics', 'writingQuality'] as const) {
-                                let sub = seg.subScores[key];
-                                if (!sub) continue;
-                                let fairMax = Math.round(topMax[key] / segCount);
-                                sub.max = fairMax;
-                                if (sub.score > fairMax) sub.score = fairMax;
-                                if (sub.score < 0) sub.score = 0;
-                            }
-                        }
-                    }
-                    // Carry forward reflections
-                    let savedReflections: any = {};
-                    let history = Swordfish.loadHistory();
-                    let prevEntries = history.history.filter((e: any) => e.projectId === arg.projectId && e.reflections);
-                    if (prevEntries.length > 0) {
-                        let latest = prevEntries[prevEntries.length - 1];
-                        savedReflections = latest.reflections;
-                    }
-                    let scoreData = { result: structured, segments: arg.segments, references: references, rawContent: content, historyId: historyId, savedReflections: savedReflections };
-                    event.sender.send('set-score-structured', { result: structured });
-                    Swordfish.showScoreReport({ projectId: arg.projectId, scoreData: scoreData });
-                    Swordfish.mainWindow.webContents.send('refresh-training');
-                    return;
+            let structured = validateScoringResult(content);
+            if (structured) {
+                // Carry forward reflections
+                let savedReflections: Record<string, string> = {};
+                let history = Swordfish.loadHistory();
+                let prevEntries = history.history.filter((e: any) => e.projectId === arg.projectId && e.reflections);
+                if (prevEntries.length > 0) {
+                    let latest = prevEntries[prevEntries.length - 1];
+                    savedReflections = latest.reflections;
                 }
-            } catch { /* not JSON, fall through to plain text */ }
+                let scoreData = { result: structured, segments: arg.segments, references: references, rawContent: content, historyId: historyId, savedReflections: savedReflections, srcLang: arg.srcLang, tgtLang: arg.tgtLang };
+                event.sender.send('set-score-structured', { result: structured });
+                // In streaming mode, report window is already open and rendering via score-stream-done
+                // Store scoreData for later re-open from history
+                Swordfish.pendingScoreData = scoreData;
+                Swordfish.streamingScoreWindow = null;
+                Swordfish.streamBuffer = { content: '', reasoning: '' };
+                Swordfish.mainWindow.webContents.send('refresh-training');
+                return;
+            }
             event.sender.send('set-score', { content: content });
+            Swordfish.streamingScoreWindow = null;
+            Swordfish.streamBuffer = { content: '', reasoning: '' };
         };
 
+        // Idle timeout: resets on each chunk, only fires if 60s with no data
+        let idleTimeout: NodeJS.Timeout | null = null;
+        let resetIdleTimeout = () => {
+            if (idleTimeout) clearTimeout(idleTimeout);
+            idleTimeout = setTimeout(() => controller.abort(), 60000);
+        };
+        resetIdleTimeout();
+
         let controller = new AbortController();
-        let timeout = setTimeout(() => controller.abort(), 300000);
+
+        // Open report window immediately for streaming
+        Swordfish.openScoreReportForStreaming(engine);
 
         if (engine === 'Claude') {
             let claudeMessages = messages.filter(m => m.role !== 'system');
@@ -7551,69 +7668,279 @@ export class Swordfish {
                     messages: claudeMessages
                 })
             }).then(response => {
-                clearTimeout(timeout);
+                if (idleTimeout) { clearTimeout(idleTimeout); idleTimeout = null; }
                 if (!response.ok) return response.json().then(d => Promise.reject(d.error?.message || response.statusText));
                 return response.json();
             }).then((responseData: any) => {
-                handleScoringResponse(responseData.content[0].text);
+                let text = responseData.content[0].text;
+                Swordfish.streamingScoreWindow?.webContents?.send('score-stream-done', {
+                    fullContent: text, thinkingContent: ''
+                });
+                handleScoringResponse(text);
             }).catch((error: any) => {
-                clearTimeout(timeout);
-                let msg = error.name === 'AbortError' ? '评分超时（5分钟），请重试' : String(error.message || error);
+                if (idleTimeout) { clearTimeout(idleTimeout); idleTimeout = null; }
+                let msg = error.name === 'AbortError' ? '评分超时（60秒无数据），请重试' : String(error.message || error);
                 event.sender.send('score-error', { error: msg });
+                Swordfish.streamingScoreWindow?.webContents?.send('score-stream-error', {
+                    error: msg, partialContent: Swordfish.streamBuffer.content
+                });
+                Swordfish.streamingScoreWindow = null;
             });
         } else {
-            // OpenAI-compatible with streaming (ChatGPT, Mistral, Gemini, Qwen, GLM, Doubao)
+            // OpenAI-compatible: try streaming first, fall back to non-streaming
+            let tryStream = true;
+            let attemptFetch = (useStream: boolean): void => {
+                let body: any = {
+                    model: model,
+                    max_tokens: 16384,
+                    messages: messages
+                };
+                if (useStream) body.stream = true;
+                if (engine === 'Doubao' || engine === 'GLM' || engine === 'DeepSeek') {
+                    body.thinking = { type: 'enabled' };
+                }
+
+                fetch(apiUrl, {
+                    method: 'POST',
+                    signal: controller.signal,
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': 'Bearer ' + apiKey
+                    },
+                    body: JSON.stringify(body)
+                }).then(async (response) => {
+                    if (!response.ok) {
+                        let errData = await response.json().catch(() => ({}));
+                        throw new Error(errData.error?.message || response.statusText);
+                    }
+                    let contentType = response.headers.get('content-type') || '';
+                    let isStreamResponse = useStream && (contentType.includes('text/event-stream') || contentType.includes('application/octet-stream'));
+
+                    if (isStreamResponse && response.body) {
+                        let reader = response.body.getReader();
+                        let decoder = new TextDecoder();
+                        let fullContent = '';
+                        let buffer = '';
+                        while (true) {
+                            let { done, value } = await reader.read();
+                            if (done) break;
+                            buffer += decoder.decode(value, { stream: true });
+                            let lines = buffer.split('\n');
+                            buffer = lines.pop() || '';
+                            for (let line of lines) {
+                                line = line.trim();
+                                if (!line || !line.startsWith('data:')) continue;
+                                let data = line.startsWith('data: ') ? line.substring(6) : line.substring(5);
+                                if (data === '[DONE]') continue;
+                                try {
+                                    let json = JSON.parse(data);
+                                    let delta = json.choices?.[0]?.delta?.content;
+                                    let reasoningDelta = json.choices?.[0]?.delta?.reasoning_content;
+                                    if (reasoningDelta) {
+                                        Swordfish.sendStreamChunk('thinking', reasoningDelta);
+                                        resetIdleTimeout();
+                                    }
+                                    if (delta) {
+                                        fullContent += delta;
+                                        Swordfish.sendStreamChunk('content', delta);
+                                        resetIdleTimeout();
+                                    }
+                                } catch (_e) {
+                                    // skip malformed lines
+                                }
+                            }
+                        }
+                        if (idleTimeout) { clearTimeout(idleTimeout); idleTimeout = null; }
+                        let thinkingContent = Swordfish.streamBuffer.reasoning;
+                        Swordfish.streamingScoreWindow?.webContents?.send('score-stream-done', {
+                            fullContent: fullContent, thinkingContent: thinkingContent
+                        });
+                        handleScoringResponse(fullContent);
+                    } else {
+                        // Non-streaming JSON response
+                        let responseData = await response.json();
+                        if (idleTimeout) { clearTimeout(idleTimeout); idleTimeout = null; }
+                        let content = responseData.choices?.[0]?.message?.content || '';
+                        let thinkingContent = responseData.choices?.[0]?.message?.reasoning_content || '';
+                        if (!content && responseData.output?.text) {
+                            content = responseData.output.text;
+                        }
+                        if (!content) {
+                            content = JSON.stringify(responseData);
+                        }
+                        if (thinkingContent) {
+                            Swordfish.sendStreamChunk('thinking', thinkingContent);
+                        }
+                        Swordfish.streamingScoreWindow?.webContents?.send('score-stream-done', {
+                            fullContent: content, thinkingContent: thinkingContent
+                        });
+                        handleScoringResponse(content);
+                    }
+                }).catch((error: any) => {
+                    if (idleTimeout) { clearTimeout(idleTimeout); idleTimeout = null; }
+                    if (error.name === 'AbortError') {
+                        event.sender.send('score-error', { error: '评分超时（60秒无数据），请重试' });
+                        Swordfish.streamingScoreWindow?.webContents?.send('score-stream-error', {
+                            error: '评分超时（60秒无数据），请重试', partialContent: Swordfish.streamBuffer.content
+                        });
+                    } else if (useStream && tryStream) {
+                        // Streaming failed — retry without streaming
+                        tryStream = false;
+                        let newController = new AbortController();
+                        controller = newController;
+                        resetIdleTimeout();
+                        attemptFetch(false);
+                    } else {
+                        event.sender.send('score-error', { error: String(error.message || error) });
+                        Swordfish.streamingScoreWindow?.webContents?.send('score-stream-error', {
+                            error: String(error.message || error), partialContent: Swordfish.streamBuffer.content
+                        });
+                    }
+                    Swordfish.streamingScoreWindow = null;
+                });
+            };
+            attemptFetch(true);
+        }
+    }
+
+    static rescoreSegment(event: IpcMainEvent, arg: { projectId: string; segmentIndex: number; source: string; newTarget: string; reference: string; srcLang: string; tgtLang: string }): void {
+        let prefs = Swordfish.currentPreferences;
+        let { apiUrl, apiKey, model, engine } = Swordfish.getScoringEngine(prefs);
+
+        if (!apiKey) {
+            event.sender.send('score-error', { error: 'No LLM engine configured' });
+            return;
+        }
+
+        let segmentsText = '\n\n### 第1段\n**原文：** ' + arg.source + '\n**学生译文：** ' + arg.newTarget;
+        if (arg.reference) {
+            segmentsText += '\n**参考译文：** ' + arg.reference;
+        }
+
+        let systemPrompt = Swordfish.CATTI_PROMPT_V2;
+        if (arg.tgtLang === 'en') {
+            systemPrompt += Swordfish.IEGS_REFERENCE;
+        }
+        systemPrompt += '\n\n请对以下翻译练习进行评分：' + segmentsText;
+
+        let messages: { role: string; content: string }[] = [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: '请严格按JSON格式输出评分结果，不要添加任何额外文字。' }
+        ];
+
+        let controller = new AbortController();
+        let idleTimeout: NodeJS.Timeout | null = null;
+        let resetIdleTimeout = () => {
+            if (idleTimeout) clearTimeout(idleTimeout);
+            idleTimeout = setTimeout(() => controller.abort(), 60000);
+        };
+        resetIdleTimeout();
+
+        let handleResponse = (content: string): void => {
+            if (idleTimeout) { clearTimeout(idleTimeout); idleTimeout = null; }
+            let structured = validateScoringResult(content);
+            if (structured && structured.segments.length > 0) {
+                let seg = structured.segments[0];
+                event.sender.send('set-re-score-result', {
+                    segmentIndex: arg.segmentIndex,
+                    result: seg,
+                    totalScore: structured.totalScore
+                });
+            } else {
+                event.sender.send('score-error', { error: 'Failed to parse scoring result' });
+            }
+        };
+
+        if (engine === 'Claude') {
+            let claudeMessages = messages.filter(m => m.role !== 'system');
             fetch(apiUrl, {
                 method: 'POST',
                 signal: controller.signal,
                 headers: {
                     'Content-Type': 'application/json',
-                    'Authorization': 'Bearer ' + apiKey
+                    'x-api-key': apiKey,
+                    'anthropic-version': '2023-06-01',
+                    'anthropic-dangerous-direct-browser-access': 'true'
                 },
-                body: JSON.stringify({
-                    model: model,
-                    max_tokens: 16384,
-                    messages: messages,
-                    stream: true
-                })
-            }).then(async (response) => {
-                if (!response.ok) {
-                    let errData = await response.json().catch(() => ({}));
-                    throw new Error(errData.error?.message || response.statusText);
-                }
-                let reader = response.body!.getReader();
-                let decoder = new TextDecoder();
-                let fullContent = '';
-                let buffer = '';
-                while (true) {
-                    let { done, value } = await reader.read();
-                    if (done) break;
-                    buffer += decoder.decode(value, { stream: true });
-                    let lines = buffer.split('\n');
-                    buffer = lines.pop() || '';
-                    for (let line of lines) {
-                        line = line.trim();
-                        if (!line || !line.startsWith('data:')) continue;
-                        let data = line.startsWith('data: ') ? line.substring(6) : line.substring(5);
-                        if (data === '[DONE]') continue;
-                        try {
-                            let json = JSON.parse(data);
-                            let delta = json.choices?.[0]?.delta?.content;
-                            if (delta) {
-                                fullContent += delta;
-                            }
-                        } catch (_e) {
-                            // skip malformed lines
-                        }
-                    }
-                }
-                clearTimeout(timeout);
-                handleScoringResponse(fullContent);
-            }).catch((error: any) => {
-                clearTimeout(timeout);
-                let msg = error.name === 'AbortError' ? '评分超时（5分钟），请重试' : String(error.message || error);
+                body: JSON.stringify({ model, max_tokens: 16384, system: systemPrompt, messages: claudeMessages })
+            }).then(response => {
+                if (!response.ok) return response.json().then(d => Promise.reject(d.error?.message || response.statusText));
+                return response.json();
+            }).then(data => {
+                handleResponse(data.content[0].text);
+            }).catch((reason: any) => {
+                if (idleTimeout) { clearTimeout(idleTimeout); idleTimeout = null; }
+                let msg = reason instanceof Error ? reason.message : String(reason);
+                if (msg === 'The user aborted a request.') msg = '评分超时（60秒无数据），请重试。';
                 event.sender.send('score-error', { error: msg });
             });
+        } else {
+            let rescoreTryStream = true;
+            let attemptRescore = (useStream: boolean): void => {
+                let body: any = { model, max_tokens: 16384, messages };
+                if (useStream) body.stream = true;
+                fetch(apiUrl, {
+                    method: 'POST',
+                    signal: controller.signal,
+                    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + apiKey },
+                    body: JSON.stringify(body)
+                }).then(async (response) => {
+                    if (!response.ok) {
+                        let errData = await response.json().catch(() => ({}));
+                        throw new Error(errData.error?.message || response.statusText);
+                    }
+                    let contentType = response.headers.get('content-type') || '';
+                    let isStreamResponse = useStream && (contentType.includes('text/event-stream') || contentType.includes('application/octet-stream'));
+
+                    if (isStreamResponse && response.body) {
+                        let reader = response.body.getReader();
+                        let content = '';
+                        let decoder = new TextDecoder();
+                        let buffer = '';
+                        let processChunk = (): Promise<void> => {
+                            return reader.read().then(({ done, value }: { done: boolean; value?: Uint8Array }) => {
+                                if (done) { handleResponse(content); return; }
+                                buffer += decoder.decode(value, { stream: true });
+                                let lines = buffer.split('\n');
+                                buffer = lines.pop() || '';
+                                for (let line of lines) {
+                                    line = line.trim();
+                                    if (!line || !line.startsWith('data:')) continue;
+                                    let data = line.startsWith('data: ') ? line.substring(6) : line.substring(5);
+                                    if (data === '[DONE]') continue;
+                                    try {
+                                        let json = JSON.parse(data);
+                                        let delta = json.choices?.[0]?.delta?.content || '';
+                                        content += delta;
+                                    } catch { /* skip */ }
+                                }
+                                return processChunk();
+                            });
+                        };
+                        return processChunk();
+                    } else {
+                        let responseData = await response.json();
+                        let content = responseData.choices?.[0]?.message?.content || '';
+                        if (!content && responseData.output?.text) content = responseData.output.text;
+                        handleResponse(content || JSON.stringify(responseData));
+                    }
+                }).catch((reason: any) => {
+                    if (idleTimeout) { clearTimeout(idleTimeout); idleTimeout = null; }
+                    let msg = reason instanceof Error ? reason.message : String(reason);
+                    if (msg === 'The user aborted a request.' || reason?.name === 'AbortError') {
+                        event.sender.send('score-error', { error: '评分超时（60秒无数据），请重试' });
+                    } else if (useStream && rescoreTryStream) {
+                        rescoreTryStream = false;
+                        let newController = new AbortController();
+                        controller = newController;
+                        resetIdleTimeout();
+                        attemptRescore(false);
+                    } else {
+                        event.sender.send('score-error', { error: msg });
+                    }
+                });
+            };
+            attemptRescore(true);
         }
     }
 
@@ -7668,10 +7995,42 @@ export class Swordfish {
         event.sender.send('set-training-history', entries);
     }
 
+    private static ERROR_CODE_NAMES: Record<string, string> = {
+        // Section 1 — 译入语规范
+        G: '语法 Grammar', SYN: '句法 Syntax', WF: '词形 Word Form', PS: '词性 Part of Speech',
+        SP: '拼写 Spelling', CH: '字形 Character', C: '大小写 Capitalization', D: '变音符号 Diacritical',
+        PUNC: '标点 Punctuation', P: '标点 Punctuation', 'OTH-ME': '其他规范 Other Mechanics',
+        // Section 2 — 意义传递
+        A: '增译 Addition', ADD: '增译 Addition', O: '漏译 Omission', OMT: '漏译 Omission',
+        T: '术语 Terminology', TERM: '术语 Terminology', TW: '用词 Terminology',
+        FA: '假朋友 Faux Ami', VF: '动词形式 Verb Form', GRM: '语法 Grammar',
+        AMB: '歧义 Ambiguity', COH: '衔接 Cohesion', CF: '一致性 Consistency',
+        F: '忠实度 Faithfulness', L: '死译 Literalness', MU: '误解 Misunderstanding',
+        IND: '犹豫不决 Indecision', UNF: '未完成 Unfinished', 'OTH-MT': '其他意义 Other Meaning',
+        // Section 3 — 行文质量
+        U: '搭配 Usage', TT: '文本类型 Text Type', R: '语域 Register', REG: '语域 Register',
+        ST: '风格 Style', STY: '风格 Style', VOC: '词汇 Vocabulary', FLW: '流畅 Fluency',
+        CS: '句式 Clause Structure', LC: '逻辑 Logic', NP: '专有名词 Proper Noun',
+        COL: '搭配 Collocation', OTH: '其他 Other',
+        // Quality sub-codes
+        quality: '行文质量', mechanics: '译入语规范', meaning: '意义传递'
+    };
+
     static exportTrainingReport(): void {
         let history = Swordfish.loadHistory();
         let trainingData = Swordfish.loadTrainingData();
-        let entries = history.history || [];
+        let entries: any[] = history.history || [];
+
+        if (entries.length === 0) {
+            let emptyHtml = '<!DOCTYPE html><html><head><meta charset="UTF-8"><title>翻译训练报告</title></head><body style="font-family:system-ui,PingFang SC,Microsoft YaHei,sans-serif;text-align:center;padding:60px;color:#999"><h1>暂无训练记录</h1><p>完成一次翻译评分后即可导出训练报告。</p></body></html>';
+            let emptyPath = join(app.getPath('temp'), 'training-report-empty.html');
+            writeFileSync(emptyPath, emptyHtml, 'utf-8');
+            shell.openExternal('file://' + emptyPath);
+            return;
+        }
+
+        let sorted = [...entries].sort((a: any, b: any) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+        let latest = sorted[sorted.length - 1];
 
         // Group by project
         let byProject: Map<string, any[]> = new Map();
@@ -7681,68 +8040,336 @@ export class Swordfish {
             byProject.set(entry.projectId, list);
         }
 
-        let html = '<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Training Report</title>';
-        html += '<style>body{font-family:system-ui,sans-serif;max-width:900px;margin:40px auto;padding:0 20px;color:#333}';
-        html += 'h1{color:#1a73e8}h2{color:#333;border-bottom:2px solid #e0e0e0;padding-bottom:8px;margin-top:40px}';
-        html += 'table{border-collapse:collapse;width:100%;margin:16px 0}th,td{border:1px solid #ddd;padding:8px 12px;text-align:left}';
-        html += 'th{background:#f5f5f5}tr:nth-child(even){background:#fafafa}';
-        html += '.score{font-weight:bold;font-size:1.2em}.good{color:#4CAF50}.mid{color:#FF9800}.low{color:#F44336}';
-        html += '.bar{display:inline-block;height:20px;background:#4CAF50;color:#fff;text-align:center;line-height:20px;font-size:12px;border-radius:3px}';
-        html += '.block{background:#f8f9fa;padding:16px;border-radius:8px;margin:12px 0;white-space:pre-wrap;font-size:14px;line-height:1.6}';
-        html += '</style></head><body>';
-        html += '<h1>Translation Training Report</h1>';
-        html += '<p>Generated: ' + new Date().toLocaleString() + '</p>';
+        // Compute stats
+        let scores = entries.filter((e: any) => e.score !== 'N/A').map((e: any) => parseInt(e.score));
+        let avg = scores.length > 0 ? (scores.reduce((a: number, b: number) => a + b, 0) / scores.length).toFixed(1) : '0';
+        let best = scores.length > 0 ? Math.max(...scores) : 0;
+        let totalChars = 0;
+        for (let e of entries) {
+            if (e.segments) for (let s of e.segments) totalChars += (s.target || '').length;
+        }
+        let uniqueDays = new Set(entries.map((e: any) => new Date(e.timestamp).toLocaleDateString())).size;
 
-        // Summary
-        if (entries.length > 0) {
-            let scores = entries.filter((e: any) => e.score !== 'N/A').map((e: any) => parseInt(e.score));
-            let avg = scores.length > 0 ? (scores.reduce((a: number, b: number) => a + b, 0) / scores.length).toFixed(1) : 'N/A';
-            html += '<h2>Summary</h2>';
-            html += '<table><tr><th>Total Attempts</th><th>Exercises Practiced</th><th>Average Score</th><th>Best Score</th></tr>';
-            html += '<tr><td>' + entries.length + '</td><td>' + byProject.size + '</td><td>' + avg + '/100</td>';
-            html += '<td>' + (scores.length > 0 ? Math.max(...scores) + '/100' : 'N/A') + '</td></tr></table>';
+        // Aggregate errors across all entries
+        let errorMap: Map<string, { code: string; section: string; count: number; totalDeduction: number; totalSeverity: number }> = new Map();
+        let allSuggestions: string[] = [];
+        let subScoreSum = { meaningTransfer: 0, targetMechanics: 0, writingQuality: 0 };
+        let subScoreCount = 0;
+        let latestSubScores: any = null;
 
-            // Progress chart (simple bar chart)
-            if (entries.length > 1) {
-                html += '<h2>Score Trend</h2>';
-                let sorted = [...entries].sort((a: any, b: any) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
-                for (let entry of sorted) {
-                    let scoreVal = parseInt(entry.score) || 0;
-                    let color = scoreVal >= 80 ? '#4CAF50' : scoreVal >= 60 ? '#FF9800' : '#F44336';
-                    html += '<div style="margin:4px 0"><span style="display:inline-block;width:140px;font-size:12px">' + new Date(entry.timestamp).toLocaleDateString() + ' ' + (entry.projectName || '').substring(0, 20) + '</span>';
-                    html += '<span class="bar" style="width:' + (scoreVal * 3) + 'px;background:' + color + '">' + entry.score + '</span></div>';
+        for (let entry of entries) {
+            let structured: any = null;
+            try { structured = JSON.parse(entry.fullResult); } catch { continue; }
+            if (!structured || !structured.segments) continue;
+
+            if (structured.suggestions) allSuggestions.push(...structured.suggestions);
+
+            if (structured.subScores) {
+                for (let key of ['meaningTransfer', 'targetMechanics', 'writingQuality'] as const) {
+                    if (structured.subScores[key]) subScoreSum[key] += structured.subScores[key].score;
+                }
+                subScoreCount++;
+            }
+
+            if (entry.id === latest.id) latestSubScores = structured.subScores;
+
+            for (let seg of structured.segments) {
+                if (!seg.errors) continue;
+                for (let err of seg.errors) {
+                    let existing = errorMap.get(err.code);
+                    if (existing) {
+                        existing.count++;
+                        existing.totalDeduction += err.deduction;
+                        existing.totalSeverity += err.severity;
+                    } else {
+                        errorMap.set(err.code, { code: err.code, section: err.section, count: 1, totalDeduction: err.deduction, totalSeverity: err.severity });
+                    }
                 }
             }
         }
 
-        // Per-exercise details
-        for (let [projectId, projectEntries] of byProject) {
-            let exercise = trainingData.exercises.find((ex: any) => ex.projectId === projectId);
-            html += '<h2>' + (exercise?.projectName || projectId) + '</h2>';
-            html += '<table><tr><th>Date</th><th>Score</th><th>Segments</th><th>Engine</th></tr>';
-            let sortedEntries = [...projectEntries].sort((a: any, b: any) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
-            for (let entry of sortedEntries) {
-                let scoreVal = parseInt(entry.score) || 0;
-                let cls = scoreVal >= 80 ? 'good' : scoreVal >= 60 ? 'mid' : 'low';
-                html += '<tr><td>' + new Date(entry.timestamp).toLocaleString() + '</td>';
-                html += '<td class="score ' + cls + '">' + entry.score + '</td>';
-                html += '<td>' + entry.translatedCount + '/' + entry.segmentCount + '</td>';
-                html += '<td>' + entry.engine + '</td></tr>';
-            }
-            html += '</table>';
+        let errorPatterns = [...errorMap.values()].sort((a, b) => b.count - a.count).slice(0, 8);
 
-            // Show latest full result
-            if (sortedEntries.length > 0) {
-                html += '<h3>Latest Feedback</h3>';
-                html += '<div class="block">' + sortedEntries[0].fullResult.replace(/</g, '&lt;').replace(/>/g, '&gt;') + '</div>';
+        // Suggestion frequency
+        let sugMap: Map<string, number> = new Map();
+        for (let s of allSuggestions) sugMap.set(s, (sugMap.get(s) || 0) + 1);
+        let topSuggestions = [...sugMap.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8);
+
+        // Compute sub-score averages (as percentage of max)
+        let subAvgPct = { meaningTransfer: 0, targetMechanics: 0, writingQuality: 0 };
+        if (subScoreCount > 0) {
+            subAvgPct.meaningTransfer = Math.round(subScoreSum.meaningTransfer / subScoreCount / 40 * 100);
+            subAvgPct.targetMechanics = Math.round(subScoreSum.targetMechanics / subScoreCount / 30 * 100);
+            subAvgPct.writingQuality = Math.round(subScoreSum.writingQuality / subScoreCount / 30 * 100);
+        }
+        let latestPct = { meaningTransfer: 0, targetMechanics: 0, writingQuality: 0 };
+        if (latestSubScores) {
+            if (latestSubScores.meaningTransfer) latestPct.meaningTransfer = Math.round(latestSubScores.meaningTransfer.score / latestSubScores.meaningTransfer.max * 100);
+            if (latestSubScores.targetMechanics) latestPct.targetMechanics = Math.round(latestSubScores.targetMechanics.score / latestSubScores.targetMechanics.max * 100);
+            if (latestSubScores.writingQuality) latestPct.writingQuality = Math.round(latestSubScores.writingQuality.score / latestSubScores.writingQuality.max * 100);
+        }
+
+        // ===== Build HTML =====
+        let h = '';
+
+        // CSS
+        h += '<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"><title>翻译训练报告</title><style>';
+        h += '*{margin:0;padding:0;box-sizing:border-box}';
+        h += 'body{font-family:system-ui,"PingFang SC","Microsoft YaHei",sans-serif;color:#333;background:#fff;line-height:1.6;max-width:900px;margin:0 auto;padding:40px 30px}';
+        h += 'h1{font-size:28px;color:#1a73e8;margin-bottom:4px}';
+        h += 'h2{font-size:18px;color:#333;border-bottom:2px solid #e0e0e0;padding-bottom:6px;margin:32px 0 16px}';
+        h += 'h3{font-size:15px;color:#555;margin:16px 0 8px}';
+        h += '.meta{color:#888;font-size:13px;margin-bottom:20px}';
+        h += '.statGrid{display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin:16px 0}';
+        h += '.statCard{background:#f8f9fa;border-radius:8px;padding:14px;text-align:center}';
+        h += '.statCard .val{font-size:24px;font-weight:bold;color:#1a73e8}';
+        h += '.statCard .label{font-size:12px;color:#888;margin-top:2px}';
+        h += 'table{border-collapse:collapse;width:100%;margin:12px 0;font-size:13px}';
+        h += 'th,td{border:1px solid #e0e0e0;padding:8px 10px;text-align:left}';
+        h += 'th{background:#f5f5f5;font-weight:600}';
+        h += '.good{color:#4CAF50;font-weight:bold}.mid{color:#FF9800;font-weight:bold}.low{color:#F44336;font-weight:bold}';
+        h += '.badge{display:inline-block;padding:2px 8px;border-radius:10px;font-size:12px;font-weight:bold}';
+        h += '.badge-ready{background:#e8f5e9;color:#4CAF50}.badge-near{background:#fff3e0;color:#FF9800}.badge-need{background:#ffebee;color:#F44336}';
+        h += '.segCard{border:1px solid #e0e0e0;border-radius:6px;padding:12px;margin:10px 0;background:#fafafa}';
+        h += '.segCard .segTitle{font-weight:bold;color:#1a73e8;margin-bottom:6px}';
+        h += '.segCard .segText{font-size:13px;margin:4px 0}';
+        h += '.segCard .segLabel{font-weight:bold;color:#666;font-size:12px}';
+        h += '.errItem{font-size:12px;color:#c62828;margin:2px 0;padding:2px 0}';
+        h += '.sugItem{font-size:13px;margin:4px 0;padding:6px 10px;background:#f0f4ff;border-radius:4px}';
+        h += '.chartWrap{margin:16px 0;text-align:center}';
+        h += '.twoCol{display:grid;grid-template-columns:1fr 1fr;gap:16px}';
+        h += '@media print{body{padding:20px}h2{page-break-after:avoid}.segCard{page-break-inside:avoid}}';
+        h += '</style></head><body>';
+
+        // 1. Cover
+        h += '<h1>翻译训练报告</h1>';
+        h += '<div class="meta">生成日期：' + new Date().toLocaleDateString('zh-CN') + ' ' + new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+        if (latest.projectName) h += ' ｜ 练习：' + latest.projectName;
+        if (latest.srcLang && latest.tgtLang) h += ' ｜ 方向：' + latest.srcLang + ' → ' + latest.tgtLang;
+        h += '</div>';
+
+        // 2. Stats overview
+        h += '<div class="statGrid">';
+        h += '<div class="statCard"><div class="val">' + entries.length + '</div><div class="label">总练习次数</div></div>';
+        h += '<div class="statCard"><div class="val">' + byProject.size + '</div><div class="label">练习篇数</div></div>';
+        h += '<div class="statCard"><div class="val">' + avg + '</div><div class="label">平均分</div></div>';
+        h += '<div class="statCard"><div class="val">' + best + '</div><div class="label">最高分</div></div>';
+        h += '<div class="statCard"><div class="val">' + uniqueDays + '</div><div class="label">练习天数</div></div>';
+        h += '</div>';
+
+        // 3. Trend chart
+        if (sorted.length >= 2) {
+            h += '<h2>分数趋势</h2>';
+            h += '<div class="chartWrap">' + Swordfish.buildTrendSvg(sorted) + '</div>';
+        }
+
+        // 4. Radar + Error patterns side by side
+        h += '<div class="twoCol">';
+        h += '<div><h2>能力分布</h2><div class="chartWrap">' + Swordfish.buildRadarSvg(subAvgPct, latestPct) + '</div></div>';
+        if (errorPatterns.length > 0) {
+            h += '<div><h2>高频错误</h2><div class="chartWrap">' + Swordfish.buildErrorBarSvg(errorPatterns) + '</div></div>';
+        }
+        h += '</div>';
+
+        // 5. CATTI readiness
+        if (latest.fullResult) {
+            let latestScore = parseInt(latest.score) || 0;
+            h += '<h2>CATTI 考级就绪度</h2>';
+            let cattiLevels = [
+                { name: 'CATTI 三级', passing: 60, comfortable: 75 },
+                { name: 'CATTI 二级', passing: 70, comfortable: 85 },
+                { name: 'CATTI 一级', passing: 80, comfortable: 90 }
+            ];
+            for (let lvl of cattiLevels) {
+                if (latestScore >= lvl.comfortable) {
+                    h += '<span class="badge badge-ready">' + lvl.name + ' ✓ Ready</span> ';
+                } else if (latestScore >= lvl.passing) {
+                    h += '<span class="badge badge-near">' + lvl.name + ' △ 接近通过</span> ';
+                } else {
+                    h += '<span class="badge badge-need">' + lvl.name + ' 还需 +' + (lvl.passing - latestScore) + ' 分</span> ';
+                }
             }
         }
 
-        html += '</body></html>';
+        // 6. Per-exercise details
+        h += '<h2>各篇练习详情</h2>';
+        for (let [projectId, projectEntries] of byProject) {
+            let exercise = trainingData.exercises.find((ex: any) => ex.projectId === projectId);
+            h += '<h3>' + (exercise?.projectName || '练习') + '</h3>';
+            h += '<table><tr><th>日期</th><th>分数</th><th>段数</th><th>引擎</th></tr>';
+            let sortedPE = [...projectEntries].sort((a: any, b: any) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+            for (let entry of sortedPE) {
+                let sv = parseInt(entry.score) || 0;
+                let cls = sv >= 80 ? 'good' : sv >= 60 ? 'mid' : 'low';
+                h += '<tr><td>' + new Date(entry.timestamp).toLocaleDateString('zh-CN') + '</td>';
+                h += '<td class="' + cls + '">' + entry.score + '</td>';
+                h += '<td>' + entry.translatedCount + '/' + entry.segmentCount + '</td>';
+                h += '<td>' + entry.engine + '</td></tr>';
+            }
+            h += '</table>';
 
-        let reportPath = join(app.getPath('temp'), 'training-report-' + Date.now() + '.html');
-        writeFileSync(reportPath, html, 'utf-8');
+            // Latest detailed segments
+            let latestEntry = sortedPE[0];
+            let structured: any = null;
+            try { structured = JSON.parse(latestEntry.fullResult); } catch { continue; }
+            if (structured && structured.segments && latestEntry.segments) {
+                h += '<div style="margin:8px 0 20px">';
+                for (let i = 0; i < structured.segments.length; i++) {
+                    let seg = structured.segments[i];
+                    let segData = latestEntry.segments[i];
+                    h += '<div class="segCard">';
+                    h += '<div class="segTitle">第' + (i + 1) + '段 — ' + (seg.score !== undefined ? Math.round(seg.score) + '分' : '') + '</div>';
+                    if (segData) {
+                        h += '<div class="segLabel">原文</div><div class="segText">' + (segData.source || '').replace(/</g, '&lt;') + '</div>';
+                        h += '<div class="segLabel">你的译文</div><div class="segText">' + (segData.target || '').replace(/</g, '&lt;') + '</div>';
+                        if (segData.reference) h += '<div class="segLabel">参考译文</div><div class="segText" style="color:#1a73e8">' + segData.reference.replace(/</g, '&lt;') + '</div>';
+                    }
+                    if (seg.strengths && seg.strengths.length > 0) h += '<div style="color:#4CAF50;font-size:13px;margin-top:4px">✓ ' + seg.strengths.join('；') + '</div>';
+                    if (seg.errors && seg.errors.length > 0) {
+                        h += '<div style="margin-top:4px">';
+                        for (let err of seg.errors) {
+                            let errName = Swordfish.ERROR_CODE_NAMES[err.code] || '';
+                            h += '<div class="errItem">[' + err.code + (errName ? ' ' + errName : '') + '] ' + err.description;
+                            if (err.original && err.suggested) h += ' （<s>' + err.original.replace(/</g, '&lt;') + '</s> → <b>' + err.suggested.replace(/</g, '&lt;') + '</b>）';
+                            h += '</div>';
+                        }
+                        h += '</div>';
+                    }
+                    // Reflections
+                    if (latestEntry.reflections && latestEntry.reflections[String(i)]) {
+                        let reflText = latestEntry.reflections[String(i)];
+                        try { let p = JSON.parse(reflText); if (p.overall) reflText = p.overall; } catch { /* use raw */ }
+                        h += '<div style="margin-top:6px;font-size:12px;color:#666;border-top:1px dashed #ddd;padding-top:4px">💭 我的反思：' + reflText.replace(/</g, '&lt;') + '</div>';
+                    }
+                    h += '</div>';
+                }
+                h += '</div>';
+            }
+        }
+
+        // 7. Suggestions
+        if (topSuggestions.length > 0) {
+            h += '<h2>改进建议</h2>';
+            for (let [sug, count] of topSuggestions) {
+                h += '<div class="sugItem">' + sug.replace(/</g, '&lt;') + (count > 1 ? ' <span style="color:#999;font-size:11px">(出现 ' + count + ' 次)</span>' : '') + '</div>';
+            }
+        }
+
+        h += '</body></html>';
+
+        let reportPath = join(app.getPath('temp'), '翻译训练报告_' + new Date().toISOString().slice(0, 10) + '.html');
+        writeFileSync(reportPath, h, 'utf-8');
         shell.openExternal('file://' + reportPath);
+    }
+
+    private static buildTrendSvg(sortedEntries: any[]): string {
+        let w = 800, h = 200, pad = 40, chartW = w - pad * 2, chartH = h - pad * 2;
+        let points: { x: number; y: number; score: number; date: string }[] = [];
+        for (let i = 0; i < sortedEntries.length; i++) {
+            let s = parseInt(sortedEntries[i].score) || 0;
+            let x = pad + (sortedEntries.length > 1 ? (i / (sortedEntries.length - 1)) * chartW : chartW / 2);
+            let y = pad + chartH - (s / 100) * chartH;
+            points.push({ x, y, score: s, date: new Date(sortedEntries[i].timestamp).toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric' }) });
+        }
+
+        let svg = '<svg width="' + w + '" height="' + h + '" viewBox="0 0 ' + w + ' ' + h + '" xmlns="http://www.w3.org/2000/svg" style="max-width:100%">';
+        // Grid
+        for (let v = 0; v <= 100; v += 20) {
+            let y = pad + chartH - (v / 100) * chartH;
+            svg += '<line x1="' + pad + '" y1="' + y + '" x2="' + (w - pad) + '" y2="' + y + '" stroke="#e0e0e0" stroke-width="1"/>';
+            svg += '<text x="' + (pad - 4) + '" y="' + (y + 4) + '" text-anchor="end" fill="#999" font-size="11">' + v + '</text>';
+        }
+        // Line
+        if (points.length > 1) {
+            let pts = points.map(p => p.x + ',' + p.y).join(' ');
+            svg += '<polyline points="' + pts + '" fill="none" stroke="#1a73e8" stroke-width="2.5" stroke-linejoin="round"/>';
+        }
+        // Points and labels
+        for (let p of points) {
+            let color = p.score >= 80 ? '#4CAF50' : p.score >= 60 ? '#FF9800' : '#F44336';
+            svg += '<circle cx="' + p.x + '" cy="' + p.y + '" r="5" fill="' + color + '"/>';
+            svg += '<text x="' + p.x + '" y="' + (p.y - 10) + '" text-anchor="middle" fill="#333" font-size="11" font-weight="bold">' + p.score + '</text>';
+            svg += '<text x="' + p.x + '" y="' + (h - pad + 16) + '" text-anchor="middle" fill="#999" font-size="10">' + p.date + '</text>';
+        }
+        svg += '</svg>';
+        return svg;
+    }
+
+    private static buildRadarSvg(avgPct: { meaningTransfer: number; targetMechanics: number; writingQuality: number }, latestPct: { meaningTransfer: number; targetMechanics: number; writingQuality: number }): string {
+        let size = 220, cx = size / 2, cy = size / 2, r = 80;
+        let dims = [
+            { label: '意义传递', pct: avgPct.meaningTransfer, latest: latestPct.meaningTransfer },
+            { label: '译入语规范', pct: avgPct.targetMechanics, latest: latestPct.targetMechanics },
+            { label: '行文质量', pct: avgPct.writingQuality, latest: latestPct.writingQuality }
+        ];
+        let angles = [-Math.PI / 2, -Math.PI / 2 + (2 * Math.PI / 3), -Math.PI / 2 + (4 * Math.PI / 3)];
+
+        let svg = '<svg width="' + size + '" height="' + size + '" viewBox="0 0 ' + size + ' ' + size + '" xmlns="http://www.w3.org/2000/svg">';
+
+        // Axes
+        for (let i = 0; i < 3; i++) {
+            let ax = cx + r * Math.cos(angles[i]);
+            let ay = cy + r * Math.sin(angles[i]);
+            svg += '<line x1="' + cx + '" y1="' + cy + '" x2="' + ax + '" y2="' + ay + '" stroke="#ddd" stroke-width="1"/>';
+            let lx = cx + (r + 18) * Math.cos(angles[i]);
+            let ly = cy + (r + 18) * Math.sin(angles[i]);
+            svg += '<text x="' + lx + '" y="' + ly + '" text-anchor="middle" dominant-baseline="central" fill="#666" font-size="11">' + dims[i].label + '</text>';
+        }
+
+        // Grid triangles (50%, 100%)
+        for (let pct of [0.5, 1.0]) {
+            let pts = angles.map(a => (cx + r * pct * Math.cos(a)).toFixed(1) + ',' + (cy + r * pct * Math.sin(a)).toFixed(1)).join(' ');
+            svg += '<polygon points="' + pts + '" fill="none" stroke="#e8e8e8" stroke-width="1"/>';
+        }
+
+        // Historical average (light)
+        let avgPts = angles.map((a, i) => (cx + r * (dims[i].pct / 100) * Math.cos(a)).toFixed(1) + ',' + (cy + r * (dims[i].pct / 100) * Math.sin(a)).toFixed(1)).join(' ');
+        svg += '<polygon points="' + avgPts + '" fill="rgba(26,115,232,0.15)" stroke="#1a73e8" stroke-width="1.5" stroke-dasharray="4,3"/>';
+
+        // Latest (solid)
+        let latestPts = angles.map((a, i) => (cx + r * (dims[i].latest / 100) * Math.cos(a)).toFixed(1) + ',' + (cy + r * (dims[i].latest / 100) * Math.sin(a)).toFixed(1)).join(' ');
+        svg += '<polygon points="' + latestPts + '" fill="rgba(76,175,80,0.25)" stroke="#4CAF50" stroke-width="2"/>';
+
+        // Dots
+        for (let i = 0; i < 3; i++) {
+            let lx = cx + r * (dims[i].latest / 100) * Math.cos(angles[i]);
+            let ly = cy + r * (dims[i].latest / 100) * Math.sin(angles[i]);
+            svg += '<circle cx="' + lx.toFixed(1) + '" cy="' + ly.toFixed(1) + '" r="4" fill="#4CAF50"/>';
+        }
+
+        // Legend
+        svg += '<rect x="10" y="' + (size - 24) + '" width="12" height="12" fill="rgba(26,115,232,0.15)" stroke="#1a73e8" stroke-width="1"/>';
+        svg += '<text x="26" y="' + (size - 14) + '" fill="#666" font-size="10">历史平均</text>';
+        svg += '<rect x="90" y="' + (size - 24) + '" width="12" height="12" fill="rgba(76,175,80,0.25)" stroke="#4CAF50" stroke-width="1"/>';
+        svg += '<text x="106" y="' + (size - 14) + '" fill="#666" font-size="10">本次</text>';
+
+        svg += '</svg>';
+        return svg;
+    }
+
+    private static buildErrorBarSvg(patterns: { code: string; section: string; count: number; totalDeduction: number }[]): string {
+        let w = 520, barH = 22, gap = 8, pad = 10, topPad = 10;
+        let maxCount = Math.max(...patterns.map(p => p.count), 1);
+        let totalH = topPad + patterns.length * (barH + gap) + 10;
+
+        let svg = '<svg width="' + w + '" height="' + totalH + '" viewBox="0 0 ' + w + ' ' + totalH + '" xmlns="http://www.w3.org/2000/svg">';
+        let sectionColors: Record<string, string> = { meaning: '#1a73e8', mechanics: '#FF9800', quality: '#9C27B0' };
+
+        for (let i = 0; i < patterns.length; i++) {
+            let p = patterns[i];
+            let y = topPad + i * (barH + gap);
+            let barW = Math.max((p.count / maxCount) * 200, 8);
+            let color = sectionColors[p.section] || '#999';
+            let fullName = Swordfish.ERROR_CODE_NAMES[p.code] || p.code;
+
+            svg += '<text x="' + pad + '" y="' + (y + barH / 2 + 4) + '" fill="#1a73e8" font-size="12" font-weight="bold">' + p.code + '</text>';
+            svg += '<text x="' + (pad + 36) + '" y="' + (y + barH / 2 + 4) + '" fill="#555" font-size="11">' + fullName + '</text>';
+            svg += '<rect x="' + (pad + 210) + '" y="' + y + '" width="' + barW.toFixed(1) + '" height="' + barH + '" rx="3" fill="' + color + '"/>';
+            svg += '<text x="' + (pad + 210 + barW + 6) + '" y="' + (y + barH / 2 + 4) + '" fill="#666" font-size="11">' + p.count + '次 -' + p.totalDeduction.toFixed(1) + '分</text>';
+        }
+
+        svg += '</svg>';
+        return svg;
     }
 
     static saveTrainingToTm(event: IpcMainEvent, arg: { projectId: string; segments: { source: string; target: string }[]; srcLang: string; tgtLang: string }): void {
@@ -7838,6 +8465,75 @@ export class Swordfish {
 
     static pendingScoreData: any = null;
 
+    static openScoreReportForStreaming(engine: string): void {
+        Swordfish.streamBuffer = { content: '', reasoning: '' };
+        Swordfish.streamingScoreWindow = null;
+
+        if (!Swordfish.scoreReportWindow || Swordfish.scoreReportWindow.isDestroyed()) {
+            Swordfish.scoreReportWindow = new BrowserWindow({
+                parent: Swordfish.mainWindow,
+                width: 700, height: 700,
+                minimizable: false, maximizable: true, resizable: true,
+                show: false,
+                icon: Swordfish.iconPath,
+                webPreferences: {
+                    nodeIntegration: true,
+                    contextIsolation: false
+                }
+            });
+            Swordfish.scoreReportWindow.setMenu(null);
+            let filePath: string = join(app.getAppPath(), 'html', Swordfish.currentPreferences.appLang, 'scoreReport.html');
+            let fileUrl: URL = new URL('file://' + filePath);
+            Swordfish.scoreReportWindow.loadURL(fileUrl.href);
+            Swordfish.scoreReportWindow.once('ready-to-show', () => {
+                Swordfish.scoreReportWindow!.show();
+                Swordfish.streamingScoreWindow = Swordfish.scoreReportWindow;
+                // Replay buffered chunks if any arrived during page load
+                if (Swordfish.streamBuffer.content || Swordfish.streamBuffer.reasoning) {
+                    Swordfish.scoreReportWindow!.webContents.send('score-stream-start', {
+                        engine: engine,
+                        supportsThinking: Swordfish.streamBuffer.reasoning !== ''
+                    });
+                    if (Swordfish.streamBuffer.reasoning) {
+                        Swordfish.scoreReportWindow!.webContents.send('score-stream-thinking', { chunk: Swordfish.streamBuffer.reasoning });
+                    }
+                    if (Swordfish.streamBuffer.content) {
+                        Swordfish.scoreReportWindow!.webContents.send('score-stream-chunk', { chunk: Swordfish.streamBuffer.content });
+                    }
+                } else {
+                    Swordfish.scoreReportWindow!.webContents.send('score-stream-start', {
+                        engine: engine,
+                        supportsThinking: engine === 'Doubao' || engine === 'GLM' || engine === 'DeepSeek'
+                    });
+                }
+            });
+            Swordfish.scoreReportWindow.on('close', () => {
+                Swordfish.streamingScoreWindow = null;
+                Swordfish.mainWindow.focus();
+            });
+            Swordfish.setLocation(Swordfish.scoreReportWindow, 'scoreReport.html');
+        } else {
+            Swordfish.scoreReportWindow.focus();
+            Swordfish.streamingScoreWindow = Swordfish.scoreReportWindow;
+            Swordfish.scoreReportWindow.webContents.send('score-stream-start', {
+                engine: engine,
+                supportsThinking: engine === 'Doubao' || engine === 'GLM' || engine === 'DeepSeek'
+            });
+        }
+    }
+
+    static sendStreamChunk(type: 'thinking' | 'content', chunk: string): void {
+        if (type === 'thinking') {
+            Swordfish.streamBuffer.reasoning += chunk;
+        } else {
+            Swordfish.streamBuffer.content += chunk;
+        }
+        if (Swordfish.streamingScoreWindow && !Swordfish.streamingScoreWindow.isDestroyed()) {
+            let channel = type === 'thinking' ? 'score-stream-thinking' : 'score-stream-chunk';
+            Swordfish.streamingScoreWindow.webContents.send(channel, { chunk });
+        }
+    }
+
     static showScoreReport(arg: { projectId: string; scoreData?: any }): void {
         if (arg.scoreData) {
             Swordfish.pendingScoreData = arg.scoreData;
@@ -7873,6 +8569,20 @@ export class Swordfish {
     }
 
     static scoreReportReady(event: IpcMainEvent): void {
+        // Streaming mode: replay buffered content
+        if (Swordfish.streamBuffer.content || Swordfish.streamBuffer.reasoning) {
+            event.sender.send('score-stream-start', {
+                engine: '',
+                supportsThinking: Swordfish.streamBuffer.reasoning !== ''
+            });
+            if (Swordfish.streamBuffer.reasoning) {
+                event.sender.send('score-stream-thinking', { chunk: Swordfish.streamBuffer.reasoning });
+            }
+            if (Swordfish.streamBuffer.content) {
+                event.sender.send('score-stream-chunk', { chunk: Swordfish.streamBuffer.content });
+            }
+            return;
+        }
         if (Swordfish.pendingScoreData) {
             event.sender.send('set-score-report-data', Swordfish.pendingScoreData);
         }
@@ -7979,7 +8689,43 @@ export class Swordfish {
             });
         }
 
-        Swordfish.pendingScoreData = { historyList: historyList, projectName: exercise?.projectName || '', references: exercise?.references || [] };
+        // Compute trend data for cross-session chart
+        let trendData: { timestamp: string; totalScore: number; errorPoints: number; qualityPoints: number; meaningTransfer?: number; targetMechanics?: number; writingQuality?: number; deltaFromPrevious?: number }[] = [];
+        for (let entry of [...historyList].reverse()) {
+            if (entry.structured && typeof entry.structured.totalScore === 'number') {
+                let prevScore = trendData.length > 0 ? trendData[trendData.length - 1].totalScore : undefined;
+                trendData.push({
+                    timestamp: entry.timestamp,
+                    totalScore: entry.structured.totalScore,
+                    errorPoints: entry.structured.errorPoints || 0,
+                    qualityPoints: entry.structured.qualityPoints || 0,
+                    meaningTransfer: entry.structured.subScores?.meaningTransfer?.score,
+                    targetMechanics: entry.structured.subScores?.targetMechanics?.score,
+                    writingQuality: entry.structured.subScores?.writingQuality?.score,
+                    deltaFromPrevious: prevScore !== undefined ? entry.structured.totalScore - prevScore : undefined,
+                });
+            }
+        }
+
+        // Compute error patterns across sessions
+        let errorMap: Record<string, { code: string; section: string; count: number; totalDeduction: number; severitySum: number }> = {};
+        for (let entry of historyList) {
+            if (!entry.structured || !entry.structured.segments) continue;
+            for (let seg of entry.structured.segments) {
+                if (!seg.errors) continue;
+                for (let err of seg.errors) {
+                    if (!errorMap[err.code]) {
+                        errorMap[err.code] = { code: err.code, section: err.section || 'quality', count: 0, totalDeduction: 0, severitySum: 0 };
+                    }
+                    errorMap[err.code].count++;
+                    errorMap[err.code].totalDeduction += err.deduction || 0;
+                    errorMap[err.code].severitySum += err.severity || 1;
+                }
+            }
+        }
+        let errorPatterns = Object.values(errorMap).map(e => ({ code: e.code, section: e.section, count: e.count, totalDeduction: e.totalDeduction, avgSeverity: e.severitySum / e.count })).sort((a, b) => b.count - a.count);
+
+        Swordfish.pendingScoreData = { historyList: historyList, projectName: exercise?.projectName || '', references: exercise?.references || [], trendData: trendData, errorPatterns: errorPatterns };
         Swordfish.showScoreReport({ projectId: arg.projectId });
     }
 
