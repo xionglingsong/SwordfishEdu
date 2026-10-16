@@ -253,3 +253,9 @@ CLI `discover /absolute/folder` 返回递归清单、文件哈希及是否支持
 从任务描述能确定的字段在 task 中自动填入；已有不同值返回冲突，不覆盖。正文分类：auto-intake 返回 classificationPending 时，Agent 继续 material-sample → 根据正文判断 → material-save → material-autofill。最后一个操作只填空白 domain/textType，标记 metadataProvenance 为 ai-inferred，保留建议ID，不覆盖原字段；unknown 分类保持待判断，不猜。
 
 用户对整个自动流程的授权包括填入有依据的空字段，无需让用户再逐项点击采纳。已有字段替换仍使用明确授权的 material-adopt。未知费用、客户接受报价和实际到账不能靠推断自动确认。原文未允许外部 AI 时跳过分类，仍可归档计数建项。
+
+## macOS 独立启动
+
+在 Agent 或自动化工具中打开桌面应用，使用 `npm run open:agent`。此命令先编译，再经 macOS LaunchServices 启动，命令退出后应用继续运行。前台开发调试仍可用 `npm run start:agent`，其生命周期依赖终端会话。
+
+启动日志保存在 `~/Library/Logs/SwordfishEdu/stdout.log` 和 `stderr.log`。已有实例时不会强制退出；如需加载新代码，先保存工作并正常退出旧实例，再启动。

@@ -5,7 +5,7 @@ description: 从客户对话、截图和原文附件整理翻译委托，澄清�
 
 # 接单建项
 
-仓库 `/Users/lingsongxiong/mydev/SwordfishEdu-master`，先读 `docs/intake.md`。用 `node scripts/swordfish-agent.mjs business REQUEST.json`，应用需以 `npm run start:agent` 运行。用户可能在别的机器，先确认实际仓库位置。不要替用户发送客户消息、开票或自行确认收到款项。
+仓库 `/Users/lingsongxiong/mydev/SwordfishEdu-master`，先读 `docs/intake.md`。用 `node scripts/swordfish-agent.mjs business REQUEST.json`，macOS 从 Agent 启动使用 `npm run open:agent`（独立于工具会话），其他平台使用 `npm run start:agent`。用户可能在别的机器，先确认实际仓库位置。不要替用户发送客户消息、开票或自行确认收到款项。
 
 ## 默认一站式工作流（优先于下方逐步操作）
 

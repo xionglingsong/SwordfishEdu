@@ -18,7 +18,8 @@
         "test:agent": "npm run build:agent && node scripts/test-agent.mjs",
         "test:styles": "node --test tests/style-guides.test.mjs",
         "test:updates": "npm run build && node --test tests/edu-updates.test.mjs",
-        "test:materials": "npm run build && node --test tests/material-classifier.test.mjs"
+        "test:materials": "npm run build && node --test tests/material-classifier.test.mjs",
+        "open:agent": "node scripts/open-agent-macos.mjs"
     },
     "author": {
         "name": "Lingsong Xiong",

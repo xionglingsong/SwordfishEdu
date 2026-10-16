@@ -410,3 +410,9 @@ Eclipse Public License 1.0 (EPL-1.0) — 开源协议，可免费使用、修改
 - [Swordfish](https://github.com/maxprograms-com/Swordfish) — 上游 CAT 工具
 - [RemoteTM](https://github.com/maxprograms-com/RemoteTM) — 远程翻译记忆服务器
 - [OpenXLIFF](https://github.com/maxprograms-com/OpenXLIFF) — XLIFF 过滤器
+
+## macOS 独立启动
+
+在 Agent 或自动化工具中打开桌面应用，使用 `npm run open:agent`。此命令先编译，再经 macOS LaunchServices 启动，命令退出后应用继续运行。前台开发调试仍可用 `npm run start:agent`，其生命周期依赖终端会话。
+
+启动日志保存在 `~/Library/Logs/SwordfishEdu/stdout.log` 和 `stderr.log`。已有实例时不会强制退出；如需加载新代码，先保存工作并正常退出旧实例，再启动。
