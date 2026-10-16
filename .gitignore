@@ -12,3 +12,7 @@ lib/
 js/
 release
 node_modules/
+
+.agent-build/
+
+pack/

@@ -44,9 +44,15 @@ public class TmsServer implements HttpHandler {
 	private static Logger logger = System.getLogger(TmsServer.class.getName());
 	private HttpServer server;
 	private static File workDir;
+    private static String agentToken;
+
+    public static boolean isAgentAuthorized(String token) {
+        return agentToken != null && token != null && java.security.MessageDigest.isEqual(
+                agentToken.getBytes(StandardCharsets.UTF_8), token.getBytes(StandardCharsets.UTF_8));
+    }
 
 	public TmsServer(Integer port) throws IOException {
-		server = HttpServer.create(new InetSocketAddress(port), 0);
+		server = HttpServer.create(new InetSocketAddress("127.0.0.1", port), 0);
 		Thread closeHook = new Thread(() -> {
 			try {
 				ProjectsHandler.closeAll();
@@ -81,7 +87,23 @@ public class TmsServer implements HttpHandler {
 	}
 
 	private void run() {
-		server.createContext("/projects", new ProjectsHandler());
+		if ("1".equals(System.getenv("SWORDFISH_AGENT_ENABLED"))) {
+            try {
+                var tokenPath = new File(getWorkFolder(), "agent-token").toPath();
+                agentToken = java.util.UUID.randomUUID().toString() + java.util.UUID.randomUUID().toString();
+                if (Files.getFileStore(tokenPath.getParent()).supportsFileAttributeView("posix")) {
+                    if (!Files.exists(tokenPath)) Files.createFile(tokenPath,
+                            java.nio.file.attribute.PosixFilePermissions.asFileAttribute(
+                                    java.nio.file.attribute.PosixFilePermissions.fromString("rw-------")));
+                    Files.setPosixFilePermissions(tokenPath, java.nio.file.attribute.PosixFilePermissions.fromString("rw-------"));
+                }
+                Files.writeString(tokenPath, agentToken, StandardCharsets.UTF_8);
+                server.createContext("/agent", new ProjectsHandler());
+            } catch (IOException e) {
+                throw new IllegalStateException("Cannot initialize local Agent access", e);
+            }
+        }
+        server.createContext("/projects", new ProjectsHandler());
 		server.createContext("/memories", new MemoriesHandler());
 		server.createContext("/glossaries", new GlossariesHandler());
 		server.createContext("/services", new ServicesHandler());

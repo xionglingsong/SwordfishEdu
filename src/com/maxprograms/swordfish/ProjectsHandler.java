@@ -86,7 +86,18 @@ public class ProjectsHandler implements HttpHandler {
 			try (InputStream is = exchange.getRequestBody()) {
 				request = TmsServer.readRequestBody(is);
 			}
-			JSONObject response = processRequest(uri.toString(), request);
+			JSONObject response;
+            if (uri.getPath().startsWith("/agent")) {
+                if (!"POST".equals(exchange.getRequestMethod()) || exchange.getRequestHeaders().containsKey("Origin")
+                        || !TmsServer.isAgentAuthorized(exchange.getRequestHeaders().getFirst("X-Swordfish-Agent"))) {
+                    exchange.sendResponseHeaders(403, -1);
+                    exchange.close();
+                    return;
+                }
+            }
+            synchronized (projectStores) {
+                response = processRequest(uri.toString(), request);
+            }
 			byte[] bytes = response.toString().getBytes(StandardCharsets.UTF_8);
 			exchange.sendResponseHeaders(200, bytes.length);
 			exchange.getResponseHeaders().add("content-type", "application/json; charset=utf-8");
@@ -108,7 +119,9 @@ public class ProjectsHandler implements HttpHandler {
 	private JSONObject processRequest(String url, String request) {
 		JSONObject response = new JSONObject();
 		try {
-			if ("/projects/create".equals(url)) {
+			if ("/agent".equals(url)) {
+                response = agentRequest(new JSONObject(request));
+            } else if ("/projects/create".equals(url)) {
 				response = createProject(request);
 			} else if ("/projects/update".equals(url)) {
 				response = updateProject(request);
@@ -261,6 +274,40 @@ public class ProjectsHandler implements HttpHandler {
 		}
 		return response;
 	}
+
+    private JSONObject agentRequest(JSONObject request) throws Exception {
+        if ("projects".equals(request.getString("action"))) return listProjects();
+        String id = request.getString("project");
+        if (projectStores.containsKey(id)) {
+            throw new IOException("Close this project's editor tab before Agent access (save any draft first)");
+        }
+        for (JSONObject process : processes.values()) {
+            if (Constants.PROCESSING.equals(process.optString(Constants.PROGRESS))) {
+                throw new IOException("Wait for background project operations to finish");
+            }
+        }
+        Project project = getProjects().get(id);
+        if (project == null) throw new IOException("Unknown project");
+        XliffStore store = new XliffStore(project.getXliff(), project.getSourceLang().getCode(),
+                project.getTargetLang().getCode());
+        try {
+            JSONObject result = store.agentRequest(request);
+            if (result.optBoolean("applied", false)) {
+                try {
+                    JSONObject statistics = store.getTranslationStatus();
+                    result.put("statistics", statistics);
+                    updateProjectStatus(id, statistics.getInt("percentage"));
+                } catch (Exception e) {
+                    // The batch is already committed: do not report a retryable write failure.
+                    result.put("warning", "Edits committed, but project statistics could not refresh: " + e.getMessage());
+                }
+            }
+            result.put("project", id).put("srcLang", store.getSrcLang()).put("tgtLang", store.getTgtLang());
+            return result;
+        } finally {
+            store.close();
+        }
+    }
 
 	private JSONObject getSegment(String request) {
 		JSONObject result = new JSONObject();

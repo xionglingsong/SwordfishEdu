@@ -1,0 +1,102 @@
+{
+  "id": "redhat-product",
+  "name": "Red Hat · 产品文档补充指南",
+  "description": "产品文档；sentence case、条件性缩约、任务与前提条件分开。",
+  "scope": "英文 Red Hat 产品及跨产品方案文档；只包含补充指南摘要，不包含需另行访问的 IBM Style。",
+  "targetLocales": [
+    "en-US"
+  ],
+  "contentType": "product-documentation",
+  "source": "https://redhat-documentation.github.io/supplementary-style-guide/",
+  "author": "Red Hat 及贡献者",
+  "license": "CC BY-SA 4.0",
+  "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/",
+  "licenseSource": "https://github.com/redhat-documentation/supplementary-style-guide/blob/main/README.md",
+  "version": "1.0.0",
+  "sourceEdition": "在线版，核对日期 2026-10-16",
+  "adaptationNotice": "中文转述、节选并加入 CAT 标签和语义保护限制；非原文全文镜像。本摘要文件按对应 CC BY-SA 许可提供，不表示原作者认可。",
+  "conventions": {
+    "headingCase": "sentence",
+    "contractions": "avoid-except-conversational-content"
+  },
+  "rules": [
+    {
+      "id": "RHP01",
+      "category": "优先级",
+      "instruction": "用于 Red Hat 产品与跨产品方案文档。原指南的优先级为产品项目规范 > Supplementary Guide > IBM Style；本摘要只覆盖已读取的补充指南，不声称内置 IBM Style 全文或规则全集。",
+      "source": "https://redhat-documentation.github.io/supplementary-style-guide/#_using_style_guides_for_redhat_product_documentation"
+    },
+    {
+      "id": "RHP02",
+      "category": "缩约",
+      "instruction": "一般产品文档避免缩约，以减少歧义并便于翻译；明确采用较口语风格的 quick start 等内容可以使用。不要继承其他品牌一律鼓励缩约的规则。",
+      "source": "https://redhat-documentation.github.io/supplementary-style-guide/#contractions"
+    },
+    {
+      "id": "RHP03",
+      "category": "语气",
+      "instruction": "通常采用较少口语化的表达；新用户内容、云服务可更对话式，API／资深读者内容可更克制。由项目和受众决定，不全局改成营销语气。",
+      "source": "https://redhat-documentation.github.io/supplementary-style-guide/#conversational-style"
+    },
+    {
+      "id": "RHP04",
+      "category": "标题大小写",
+      "instruction": "产品文档及知识库文章的标题采用 sentence-style capitalization，不用 headline/title case；保留产品和专名的正确大小写。",
+      "source": "https://redhat-documentation.github.io/supplementary-style-guide/#titles-and-headings"
+    },
+    {
+      "id": "RHP05",
+      "category": "任务标题",
+      "instruction": "在采用 Jobs to Be Done 结构的任务主题中用祈使动词表达目标，概念／参考主题用明确名词短语；原指南要求完成结构转换前不要修改既有 -ing 标题。无法确认迁移状态时仅建议。",
+      "source": "https://redhat-documentation.github.io/supplementary-style-guide/#titles-and-headings"
+    },
+    {
+      "id": "RHP06",
+      "category": "标题长度",
+      "instruction": "标题聚焦用户目标与明确关键词，建议 3–11 词、约 60–75 字符；CAT 中把长度问题作为审阅提示，不为达标删除限定条件。",
+      "source": "https://redhat-documentation.github.io/supplementary-style-guide/#titles-and-headings"
+    },
+    {
+      "id": "RHP07",
+      "category": "前提条件",
+      "instruction": "把 prerequisites 写成开始前已经满足的状态、检查项或已完成事项，必要时可用被动语态，不改成操作命令；同一列表保持平行结构。",
+      "source": "https://redhat-documentation.github.io/supplementary-style-guide/#prerequisites"
+    },
+    {
+      "id": "RHP08",
+      "category": "引导句",
+      "instruction": "Prerequisites 和 Procedure 标题下不添加无信息的引导句；需要分组或澄清复杂步骤时用完整句。CAT 中不删除或合并独立分段。",
+      "source": "https://redhat-documentation.github.io/supplementary-style-guide/#lead-in-sentences"
+    },
+    {
+      "id": "RHP09",
+      "category": "单步任务",
+      "instruction": "仅一个步骤的流程使用无编号项目符号；只有可编辑文档结构时才调整，CAT 中不改列表标签或编号占位符。",
+      "source": "https://redhat-documentation.github.io/supplementary-style-guide/#single-step-procedures"
+    },
+    {
+      "id": "RHP10",
+      "category": "输入",
+      "instruction": "指示用户输入文字时用 enter，而不是 type 或 input，输入内容通常用等宽字体；保留实际命令、数据和格式标签。",
+      "source": "https://redhat-documentation.github.io/supplementary-style-guide/#text-entry"
+    },
+    {
+      "id": "RHP11",
+      "category": "日期",
+      "instruction": "默认 day Month year，例如 3 October 2019；出现展示或理解问题时可用 Month day, year。含糊日期先确认，不能猜测或改变真实日期。",
+      "source": "https://redhat-documentation.github.io/supplementary-style-guide/#date-formats"
+    },
+    {
+      "id": "RHP12",
+      "category": "占位符",
+      "instruction": "新写文档的用户替换值用描述性的 <value_name>，多词下划线、一般小写，并按代码／正文场景排版。CAT 中现有占位符、XML 语法和标签保持原样，仅建议结构修订。",
+      "source": "https://redhat-documentation.github.io/supplementary-style-guide/#user-replaced-values"
+    },
+    {
+      "id": "RHP13",
+      "category": "架构术语",
+      "instruction": "普通叙述中的架构名称写 AArch64；对象、参数或命令中的 aarch64 按实际代码写法保留，不能全局统一大小写。",
+      "source": "https://redhat-documentation.github.io/supplementary-style-guide/#aarch64"
+    }
+  ]
+}

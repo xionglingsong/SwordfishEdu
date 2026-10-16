@@ -11,7 +11,12 @@
         "pack": "electron-builder --dir",
         "dist": "electron-builder",
         "dist:mac": "electron-builder --mac",
-        "dist:win": "electron-builder --win"
+        "dist:win": "electron-builder --win",
+        "agent": "node scripts/swordfish-agent.mjs",
+        "build:agent": "node scripts/build-agent.mjs",
+        "start:agent": "node scripts/build-agent.mjs --start",
+        "test:agent": "npm run build:agent && node scripts/test-agent.mjs",
+        "test:styles": "node --test tests/style-guides.test.mjs"
     },
     "author": {
         "name": "Lingsong Xiong",
@@ -37,7 +42,8 @@
             "fonts/**/*",
             "node_modules/**/*",
             "review/**/*",
-            "package.json"
+            "package.json",
+            "style-guides/**/*"
         ],
         "extraResources": [
             {

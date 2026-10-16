@@ -1585,6 +1585,10 @@ public class XliffStore {
 		return new JSONObject(data);
 	}
 
+    public synchronized JSONObject agentRequest(JSONObject request) throws Exception {
+        return AgentEdits.run(conn, request);
+    }
+
 	public void close() throws SQLException {
 		getUnitData.close();
 		getSource.close();

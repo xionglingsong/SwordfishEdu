@@ -30,6 +30,7 @@ import { CommentReply, ReviewComment } from "./reviewComments.js";
 import { FullId } from "./segmentId.js";
 import { Rect, Sizes } from "./windowSizes.js";
 import { validateScoringResult } from "./scoringSchema.js";
+import { listStyleGuides, getStyleGuide } from "../style-guides/runtime.mjs";
 
 export class Swordfish {
 
@@ -689,7 +690,9 @@ export class Swordfish {
             mkdirSync(Swordfish.appHome, { recursive: true });
         }
 
-        this.ls = spawn(this.javapath, ['--module-path', 'lib', '-m', 'swordfish/com.maxprograms.swordfish.TmsServer', '-port', '8070'], { cwd: app.getAppPath(), windowsHide: true });
+        const agentJar = process.env.SWORDFISH_AGENT_JAR;
+        const agentArgs = agentJar ? ['--upgrade-module-path', agentJar] : [];
+        this.ls = spawn(this.javapath, [...agentArgs, '--module-path', 'lib', '-m', 'swordfish/com.maxprograms.swordfish.TmsServer', '-port', '8070'], { cwd: app.getAppPath(), windowsHide: true });
         this.ls.stdout.on('data', (data) => {
             console.log(`stdout: ${data}`);
         });
@@ -1310,6 +1313,7 @@ export class Swordfish {
         ipcMain.on('get-ai-engines', (event: IpcMainEvent) => {
             Swordfish.getAiEngines(event);
         });
+        ipcMain.handle('get-style-guides', () => listStyleGuides());
         ipcMain.on('ai-chat', (event: IpcMainEvent, arg: any) => {
             Swordfish.aiChat(event, arg);
         });
@@ -6634,7 +6638,7 @@ export class Swordfish {
         event.sender.send('set-ai-engines', engines);
     }
 
-    static aiChat(event: IpcMainEvent, arg: { messages: { role: string; content: string }[]; engine: string; sourceText?: string; targetText?: string; srcLang?: string; tgtLang?: string }): void {
+    static aiChat(event: IpcMainEvent, arg: { messages: { role: string; content: string }[]; engine: string; styleGuide?: string; sourceText?: string; targetText?: string; srcLang?: string; tgtLang?: string }): void {
         let prefs = Swordfish.currentPreferences;
         let apiUrl = '';
         let apiKey = '';
@@ -6698,6 +6702,14 @@ export class Swordfish {
         }
 
         let systemPrompt = Swordfish.MONTEREY_PROMPT;
+        if (arg.styleGuide) {
+            try {
+                systemPrompt += '\n\n' + getStyleGuide(arg.styleGuide).prompt;
+            } catch (error) {
+                event.sender.send('ai-chat-error', { error: String(error) });
+                return;
+            }
+        }
         if (arg.sourceText) {
             systemPrompt += '\n\n当前段落：';
             systemPrompt += '\n源文 (' + (arg.srcLang || 'unknown') + '): ' + arg.sourceText;

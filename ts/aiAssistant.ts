@@ -24,6 +24,7 @@ export class AiAssistant {
     private messagesContainer: HTMLDivElement;
     private inputArea: HTMLTextAreaElement;
     private engineSelect: HTMLSelectElement;
+    private styleSelect: HTMLSelectElement;
     private sendButton: HTMLAnchorElement;
     private clearButton: HTMLAnchorElement;
     private segmentIndicator: HTMLDivElement;
@@ -79,6 +80,31 @@ export class AiAssistant {
         });
         toolbar.appendChild(this.clearButton);
 
+        const styleRow = document.createElement('div');
+        styleRow.classList.add('aiToolbar');
+        const styleLabel = document.createElement('label');
+        styleLabel.innerText = '风格指南：';
+        this.styleSelect = document.createElement('select');
+        this.styleSelect.classList.add('aiEngineSelect');
+        this.styleSelect.setAttribute('aria-label', '风格指南');
+        this.styleSelect.add(new Option('不指定', ''));
+        styleLabel.appendChild(this.styleSelect);
+        styleRow.appendChild(styleLabel);
+        wrapper.appendChild(styleRow);
+        ipcRenderer.invoke('get-style-guides').then((guides: { id: string; name: string; description: string }[]) => {
+            guides.forEach(guide => {
+                const option = new Option(guide.name, guide.id);
+                option.title = guide.description;
+                this.styleSelect.add(option);
+            });
+            const saved = localStorage.getItem('swordfish-style-guide') || '';
+            this.styleSelect.value = guides.some(guide => guide.id === saved) ? saved : '';
+        }).catch((error: Error) => { console.error('Unable to load style guides', error); });
+        this.styleSelect.addEventListener('change', () => {
+            localStorage.setItem('swordfish-style-guide', this.styleSelect.value);
+            this.clearChat();
+        });
+
         // Current segment indicator
         this.segmentIndicator = document.createElement('div');
         this.segmentIndicator.classList.add('aiSegmentIndicator');
@@ -90,6 +116,20 @@ export class AiAssistant {
         quickBar.classList.add('aiQuickBar');
         wrapper.appendChild(quickBar);
 
+        const styleReview = document.createElement('a');
+        styleReview.href = '#';
+        styleReview.classList.add('aiQuickButton');
+        styleReview.innerText = '风格审校';
+        styleReview.addEventListener('click', (event: Event) => {
+            event.preventDefault();
+            if (this.sending) return;
+            if (!this.styleSelect.value) {
+                this.appendMessage('assistant', '请先选择一份风格指南。');
+                return;
+            }
+            this.sendMessage('按所选风格指南审阅当前译文，列出具体修改建议、修改后的译文和规则编号。保持源文含义、标签、代码、数字和术语。');
+        });
+        quickBar.appendChild(styleReview);
         this.addQuickButton(quickBar, 'Review', 'Review my translation and give specific feedback on what is good and what could be improved.');
         this.addQuickButton(quickBar, 'Alternatives', 'Suggest 2-3 alternative translations for this segment, explaining the trade-offs of each.');
         this.addQuickButton(quickBar, 'Explain', 'Explain the source text meaning, any idioms, cultural references, or translation difficulties.');
@@ -185,11 +225,13 @@ export class AiAssistant {
         this.appendMessage('user', displayText);
         this.inputArea.value = '';
         this.sending = true;
+        this.styleSelect.disabled = true;
         this.sendButton.innerText = '...';
 
         ipcRenderer.send('ai-chat', {
             messages: this.messages,
             engine: engine,
+            styleGuide: this.styleSelect.value,
             sourceText: context.sourceText,
             targetText: context.targetText,
             srcLang: context.srcLang,
@@ -199,6 +241,7 @@ export class AiAssistant {
 
     onResponse(content: string): void {
         this.sending = false;
+        this.styleSelect.disabled = false;
         this.sendButton.innerText = 'Send';
         this.messages.push({ role: 'assistant', content: content });
 
@@ -255,6 +298,7 @@ export class AiAssistant {
 
     private onError(error: string): void {
         this.sending = false;
+        this.styleSelect.disabled = false;
         this.sendButton.innerText = 'Send';
         if (this.streamingTextDiv) {
             let msgDiv = this.streamingTextDiv.parentElement;

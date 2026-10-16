@@ -182,6 +182,23 @@ Training 面板一键导出综合训练报告（中文 HTML，浏览器打开）
 
 ---
 
+## 内置技术写作与本地化风格指南
+
+AI 助手可选择阮一峰、yikeke、微软通用英文、微软英式英语、微软简中文档／界面、Google 开发者指南、Apple Style Guide（美式英文）或 Red Hat（培训／产品文档分别配置），并使用“风格审校”按钮。Agent CLI 支持 `styles` / `style GUIDE_ID` 离线读取同一份规则；修改批次可记录所用指南。内置内容为适合 CAT 的摘要，保留来源、许可信息、PDF 页码和语言／场景差异。
+
+[指南来源与适用范围](style-guides/README.md) · [调用方式](docs/agent-control.md#内置风格指南)
+
+## Agent 对话式批量修改译文
+
+新增本地 JSON CLI：外部 Agent 可分页读取项目段落、按自然语言要求生成修改、预检、批量提交并按批次撤销。校验版本冲突、锁定状态与标签结构；修改不自动写入 TM。
+
+使用 `npm run start:agent` 启动。应用保持运行，操作前保存并关闭目标项目的编辑标签，操作后重开查看。当前为源码运行功能，未更新 DMG，也未改变内置 AI Tutor。
+
+- [使用方式、命令与补丁格式](docs/agent-control.md)
+- [Agent 专用 Skill](.agents/skills/swordfish-agent/SKILL.md)
+
+---
+
 ## 专业 CAT 功能
 
 ### 翻译编辑器

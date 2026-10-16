@@ -1,0 +1,90 @@
+{
+  "id": "redhat",
+  "name": "Red Hat · Technical Writing（Stylepedia）",
+  "description": "培训／认证等技术内容；title case，避免缩约。",
+  "scope": "英文培训、认证和其他非产品文档技术内容；不用于替代产品文档补充指南。",
+  "targetLocales": [
+    "en-US"
+  ],
+  "contentType": "training-and-technical-documentation",
+  "source": "https://stylepedia.net/style/",
+  "author": "Red Hat 及贡献者",
+  "license": "CC BY-SA 3.0",
+  "licenseUrl": "https://creativecommons.org/licenses/by-sa/3.0/",
+  "licenseSource": "https://stylepedia.net/style/",
+  "version": "1.0.0",
+  "sourceEdition": "Stylepedia v7.2",
+  "adaptationNotice": "中文转述、节选并加入 CAT 标签和语义保护限制；非原文全文镜像。本摘要文件按对应 CC BY-SA 许可提供，不表示原作者认可。",
+  "conventions": {
+    "headingCase": "title",
+    "contractions": "avoid"
+  },
+  "rules": [
+    {
+      "id": "RHT01",
+      "category": "用途",
+      "instruction": "用于 Red Hat 培训、认证与其他非产品文档技术内容；Red Hat 产品文档应选择 redhat-product，不混用两套规则。",
+      "source": "https://stylepedia.net/"
+    },
+    {
+      "id": "RHT02",
+      "category": "语态",
+      "instruction": "优先主动语态，明确执行者；发布说明或突出重要对象时可保留更自然的被动语态，不为改主动而臆造施事者。",
+      "source": "https://stylepedia.net/style/#active-voice"
+    },
+    {
+      "id": "RHT03",
+      "category": "缩约",
+      "instruction": "正式技术内容不用 can’t、don’t 等缩约，展开为完整形式；普通正文中的 e.g.、i.e. 可改为 for example、that is。代码、引文和固定标签不处理。",
+      "source": "https://stylepedia.net/style/#contractions-and-abbreviations"
+    },
+    {
+      "id": "RHT04",
+      "category": "时态",
+      "instruction": "描述当前系统行为通常用一般现在时，避免不必要的 will；真实未来事件、承诺和历史事实保留原时态。",
+      "source": "https://stylepedia.net/style/#tense"
+    },
+    {
+      "id": "RHT05",
+      "category": "标题",
+      "instruction": "标题、表标题和步骤标题采用 title case；图注、图例、图中标签、表列标题采用 sentence case。组织或项目明确规范优先。",
+      "source": "https://stylepedia.net/style/#heading-styles"
+    },
+    {
+      "id": "RHT06",
+      "category": "标题内容",
+      "instruction": "标题直接表明任务或主题；章节可用具体动作的 -ing 形式，子任务也可用祈使动词。纯概念内容优先具体名词短语，不强行加入 Understanding。",
+      "source": "https://stylepedia.net/style/#heading-styles"
+    },
+    {
+      "id": "RHT07",
+      "category": "清晰",
+      "instruction": "避免名词堆叠和不清楚的修饰关系；长句可在当前 CAT 段内改为易读表达，但保留技术含义，不跨段重排。",
+      "source": "https://stylepedia.net/style/#Sentence_Structure-Noun_Stacking"
+    },
+    {
+      "id": "RHT08",
+      "category": "简洁",
+      "instruction": "删除没有实质作用的 actually、really、simply、very 等赘词；不把任务说成轻而易举，不因删词改变程度或事实。",
+      "source": "https://stylepedia.net/style/#redundant"
+    },
+    {
+      "id": "RHT09",
+      "category": "模态",
+      "instruction": "区分 may 的许可／可能性和 should 的建议／义务。只有确定含义时才换为 can、might、must 等；不能把建议升级为强制要求。",
+      "source": "https://stylepedia.net/style/#avoiding-ambiguities"
+    },
+    {
+      "id": "RHT10",
+      "category": "版本",
+      "instruction": "Red Hat 产品系列通常写主版本，讨论特定小版本或该版本功能时保留小版本；第三方产品按官方写法。不能删除兼容性限制中的版本精度。",
+      "source": "https://stylepedia.net/style/#version-numbers"
+    },
+    {
+      "id": "RHT11",
+      "category": "提示",
+      "instruction": "按 Note、Important、Warning 的用途保留提示级别，保持简洁；不得把潜在破坏性后果降级为普通说明，不改受保护提示标签。",
+      "source": "https://stylepedia.net/style/#admonitions"
+    }
+  ]
+}
