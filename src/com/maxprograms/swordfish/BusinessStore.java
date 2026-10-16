@@ -68,6 +68,8 @@ public final class BusinessStore {
     }
     public static synchronized JSONObject execute(JSONObject req)throws Exception {
         JSONObject data=load();String op=req.getString("op");
+        if(op.equals("discover"))return new JSONObject().put("files",IntakeArchive.discover(req.getJSONArray("paths")));
+        if(op.equals("auto-intake"))return autoIntake(data,req);
         if(!data.has("rateCards"))data.put("rateCards",new JSONArray());
         if(op.equals("rate-save")) {
             JSONObject input=req.getJSONObject("rate"),rate;
@@ -142,6 +144,18 @@ public final class BusinessStore {
         switch(op) {
             case "material-save" -> row.put("materialAnalysis",MaterialAnalysis.validate(row,req));
             case "material-adopt" -> MaterialAnalysis.adopt(row,req);
+            case "material-autofill" -> {
+                JSONObject brief=row.optJSONObject("brief",new JSONObject());JSONArray fields=new JSONArray();
+                for(String key:List.of("domain","textType"))if(brief.optString(key).isBlank())fields.put(key);
+                if(!fields.isEmpty()) {
+                    boolean confirmed=row.optBoolean("requirementsConfirmed");
+                    MaterialAnalysis.adopt(row,new JSONObject().put("suggestionId",req.getString("suggestionId")).put("fields",fields));
+                    row.put("requirementsConfirmed",confirmed);
+                    JSONObject provenance=row.optJSONObject("metadataProvenance",new JSONObject());
+                    for(Object field:fields)provenance.put((String)field,new JSONObject().put("status","ai-inferred").put("suggestionId",req.getString("suggestionId")));
+                    row.put("metadataProvenance",provenance);
+                }
+            }
             case "time-add" -> {
                 JSONObject entry=req.getJSONObject("entry");UUID.fromString(entry.getString("id"));LocalDate date=LocalDate.parse(entry.getString("date"));
                 if(date.isAfter(LocalDate.now(java.time.ZoneId.of(row.optString("businessTimeZone","Asia/Shanghai")))))throw new IllegalArgumentException("Work date cannot be in future");
@@ -217,6 +231,116 @@ public final class BusinessStore {
         }
         touch(row);save(data);return new JSONObject().put("intake",view(row)).put("projectId",row.optString("projectId"));
     }
+    private static JSONObject autoIntake(JSONObject data,JSONObject req)throws Exception {
+        String clientName=req.optString("clientName").trim(),projectName=req.getString("projectName").trim();
+        if(projectName.isBlank())throw new IllegalArgumentException("Project name must be explicit or resolved by the Agent");
+        JSONObject client=null;
+        if(req.has("clientId"))client=find(data.getJSONArray("clients"),req.getString("clientId"));
+        else {
+            if(clientName.isBlank())return new JSONObject().put("outcome","needs-information").put("questions",new JSONArray().put("请明确付款客户名称，以便归档和防止混单"));
+            for(Object o:data.getJSONArray("clients"))if(clientName.equalsIgnoreCase(((JSONObject)o).getString("name").trim())) {
+                if(client!=null)throw new IllegalArgumentException("Ambiguous customer; provide clientId");client=(JSONObject)o;
+            }
+            if(client==null){client=new JSONObject().put("id",UUID.randomUUID().toString()).put("name",clientName);touch(client);data.getJSONArray("clients").put(client);}
+        }
+        JSONObject row=null;
+        if(req.has("intakeId")) {
+            row=find(data.getJSONArray("intakes"),req.getString("intakeId"));
+            if(!client.getString("id").equals(row.getString("clientId")))throw new IllegalArgumentException("Customer does not match selected project");
+        } else for(Object o:data.getJSONArray("intakes")) {
+            JSONObject candidate=(JSONObject)o;
+            if(client.getString("id").equals(candidate.optString("clientId"))&&projectName.equalsIgnoreCase(candidate.optString("name").trim())) {
+                if(row!=null)throw new IllegalArgumentException("Multiple matching commissions; specify intakeId");row=candidate;
+            }
+        }
+        if(row==null) {
+            JSONArray candidates=ProjectsHandler.findBusinessProjectCandidates(projectName,client.getString("name"));
+            if(!candidates.isEmpty())return new JSONObject().put("outcome","needs-information").put("existingProjects",candidates)
+                .put("questions",new JSONArray().put("发现同名已有 CAT 项目但未关联委托。请确认归属后使用不同项目名，避免重复建项；暂不自动接管旧项目。"));
+        }
+        if(row==null){row=new JSONObject().put("id",UUID.randomUUID().toString()).put("name",projectName).put("clientId",client.getString("id")).put("orderKind","cat")
+            .put("quotes",new JSONArray()).put("payments",new JSONArray()).put("files",new JSONArray()).put("questions",new JSONArray()).put("brief",new JSONObject());data.getJSONArray("intakes").put(row);}
+        if(!"cat".equals(row.optString("orderKind","cat")))throw new IllegalArgumentException("Matched commission is a service order; choose a separate CAT project");
+        if(row.has("projectId"))ProjectsHandler.requireBusinessProjectClosed(row.getString("projectId"));
+        JSONObject previous=new JSONObject(row.toString());
+        JSONObject task=req.optJSONObject("task",new JSONObject());JSONArray conflicts=new JSONArray();
+        for(String key:List.of("srcLang","tgtLang","deadline","service","orderNumber","paymentTerms","endClient"))if(task.has(key)&&!task.getString(key).isBlank()) {
+            String value=task.getString(key);
+            if(!row.optString(key).isBlank()&&!row.getString(key).equals(value))conflicts.put("已有 "+key+" 与本次描述不同，请确认沿用还是另建项目");
+            else row.put(key,value);
+        }
+        JSONObject brief=row.getJSONObject("brief"),requestedBrief=task.optJSONObject("brief",new JSONObject());
+        for(String key:requestedBrief.keySet()) {
+            if(!BRIEF_FIELDS.contains(key))throw new IllegalArgumentException("Unknown brief field: "+key);
+            String value=requestedBrief.getString(key);
+            if(!value.isBlank()&&!brief.optString(key).isBlank()&&!value.equals(brief.getString(key)))conflicts.put("已有 brief."+key+" 不同；未覆盖");
+            else if(brief.optString(key).isBlank())brief.put(key,value);
+        }
+        String policy=brief.optString("aiPolicy");if(!policy.isBlank()&&!Set.of("allowed","local-only","forbidden").contains(policy))throw new IllegalArgumentException("Invalid AI policy");
+        if(!row.optString("deadline").isBlank())OffsetDateTime.parse(row.getString("deadline"));
+        for(String lang:List.of("srcLang","tgtLang"))if(!row.optString(lang).isBlank()&&LanguageUtils.getLanguage(row.getString(lang))==null)throw new IllegalArgumentException("Unknown language: "+lang);
+        if(!conflicts.isEmpty()){for(String key:new ArrayList<>(row.keySet()))row.remove(key);for(String key:previous.keySet())row.put(key,previous.get(key));touch(row);save(data);return new JSONObject().put("outcome","needs-information").put("questions",conflicts).put("intake",view(row));}
+        JSONArray discovered=IntakeArchive.discover(req.getJSONArray("paths"));
+        for(Object o:discovered){JSONObject file=(JSONObject)o;if(file.getString("role").equals("source")&&!file.getBoolean("sourceSupported"))conflicts.put("无法解析为原文："+file.getString("relative")+"；请由 Agent 确认是参考/沟通材料，还是需 OCR/转换");}
+        if(!conflicts.isEmpty()){for(String key:new ArrayList<>(row.keySet()))row.remove(key);for(String key:previous.keySet())row.put(key,previous.get(key));touch(row);save(data);return new JSONObject().put("outcome","needs-information").put("questions",conflicts).put("intake",view(row));}
+        Path archiveRoot=TmsServer.getWorkFolder().toPath().resolve("archive");
+        JSONObject archive=IntakeArchive.archive(archiveRoot,client,row,discovered);
+        JSONArray batches=row.optJSONArray("archiveBatches",new JSONArray());boolean known=false;
+        Set<String> imported=new HashSet<>();
+        if(row.has("projectId")&&row.has("analysis"))for(Object f:row.getJSONObject("analysis").getJSONArray("files")){JSONObject file=(JSONObject)f;imported.add(file.getString("sha256")+"|"+file.getString("role"));}
+        for(Object b:batches){JSONObject prior=(JSONObject)b;if(prior.getString("batchId").equals(archive.getString("batchId")))known=true;if(prior.optBoolean("integrated"))for(Object f:prior.getJSONArray("files")){JSONObject file=(JSONObject)f;imported.add(file.getString("sha256")+"|"+file.getString("role"));}}
+        if(known)for(Object b:batches)if(((JSONObject)b).getString("batchId").equals(archive.getString("batchId")))archive=(JSONObject)b;
+        if(!known){batches.put(archive);row.put("archiveBatches",batches);}
+        row.put("archiveFolder",archive.getString("folder"));
+        JSONArray notes=row.optJSONArray("intakeSources",new JSONArray());
+        if(!known)notes.put(new JSONObject().put("batchId",archive.getString("batchId")).put("description",req.optString("description")).put("evidence",req.optJSONArray("evidence",new JSONArray())).put("at",Instant.now().toString()));
+        row.put("intakeSources",notes);
+        if(task.has("questions"))row.put("questions",task.getJSONArray("questions"));
+        // This field asserts the Agent has resolved the explicit requirements, not customer acceptance of a price.
+        if(task.has("requirementsConfirmed"))row.put("requirementsConfirmed",task.getBoolean("requirementsConfirmed"));
+        JSONArray fresh=new JSONArray();Set<String> batchSeen=new HashSet<>();int skipped=0;
+        for(Object o:archive.getJSONArray("files")) {
+            JSONObject file=(JSONObject)o;String key=file.getString("sha256")+"|"+file.getString("role");
+            if(imported.contains(key)||!batchSeen.add(key)){skipped++;continue;}
+            if(file.getString("role").equals("source"))fresh.put(new JSONObject().put("path",file.getString("archivedPath")).put("role","source").put("encoding",file.optString("encoding","UTF-8")));
+        }
+        // Save checkpoints before parsing/building so retries locate the same client/intake/archive.
+        touch(row);save(data);
+        JSONArray needed=new JSONArray();for(String key:List.of("srcLang","tgtLang","deadline"))if(row.optString(key).isBlank())needed.put(key);
+        if(policy.isBlank())needed.put("brief.aiPolicy");if(!row.optBoolean("requirementsConfirmed"))needed.put("requirementsConfirmed");
+        for(Object q:row.optJSONArray("questions",new JSONArray()))needed.put(q);
+        if(!needed.isEmpty())return new JSONObject().put("outcome","needs-information").put("questions",needed).put("intake",view(row));
+        if(fresh.isEmpty()) {
+            if(!row.has("projectId"))return new JSONObject().put("outcome","needs-information").put("questions",new JSONArray().put("至少需要一份可解析的原文文件" )).put("intake",view(row));
+            archive.put("integrated",true);touch(row);save(data);
+            return new JSONObject().put("outcome","unchanged").put("skippedFiles",skipped).put("projectId",row.getString("projectId")).put("intake",view(row));
+        }
+        JSONObject batchAnalysis=archive.optJSONObject("analysis");
+        if(batchAnalysis==null) {
+            JSONObject draft=new JSONObject(row.toString()).put("files",fresh);batchAnalysis=analyze(draft);archive.put("analysis",batchAnalysis);touch(row);save(data);
+        }
+        boolean appending=row.has("projectId");
+        if(appending)ProjectAppend.append(row.getString("projectId"),archive.getString("batchId"),batchAnalysis);
+        JSONArray allFiles=row.getJSONArray("files");Set<String> existingPaths=new HashSet<>();for(Object f:allFiles)existingPaths.add(((JSONObject)f).getString("path"));for(Object f:fresh)if(existingPaths.add(((JSONObject)f).getString("path")))allFiles.put(f);
+        if(appending) {
+            JSONObject combined=new JSONObject(row.getJSONObject("analysis").toString());
+            for(Object f:batchAnalysis.getJSONArray("files"))combined.getJSONArray("files").put(f);
+            for(String key:List.of("words","characters","han","segments"))combined.getJSONObject("totals").put(key,combined.getJSONObject("totals").getLong(key)+batchAnalysis.getJSONObject("totals").getLong(key));
+            combined.put("id",UUID.randomUUID().toString()).put("fingerprint",fingerprint(row));row.put("analysis",combined).remove("materialAnalysis");
+            row.put("additionalScopeUnpriced",true);
+        } else {
+            batchAnalysis.put("fingerprint",fingerprint(row));row.put("analysis",batchAnalysis);
+            row.put("projectId",createProject(row,data));
+        }
+        archive.put("integrated",true);touch(row);save(data);
+        if(!appending && req.has("pricing")) {
+            try {JSONObject quote=calculate(row,req.getJSONObject("pricing"));row.getJSONArray("quotes").put(quote);touch(row);save(data);}
+            catch(Exception e){return new JSONObject().put("outcome","created-quote-needs-information").put("warning",e.getMessage()).put("projectId",row.getString("projectId")).put("intake",view(row));}
+        }
+        return new JSONObject().put("outcome",appending?"appended":"created").put("skippedFiles",skipped).put("addedFiles",fresh.length()).put("projectId",row.getString("projectId"))
+            .put("classificationPending",policy.equals("allowed")&&!row.has("materialAnalysis")).put("intake",view(row));
+    }
+
     private static BigDecimal money(String value) {BigDecimal d=new BigDecimal(value);if(d.signum()<0 || d.scale()>2)throw new IllegalArgumentException("Amounts require nonnegative decimals with at most two places");return d;}
     public static JSONObject calculate(JSONObject row,JSONObject pricing) {
         boolean manual=row.optString("orderKind","cat").equals("service");

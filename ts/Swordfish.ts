@@ -1329,6 +1329,12 @@ export class Swordfish {
         ipcMain.handle('business-request', async (_event, request: any) => {
             return await new Promise((resolve, reject) => Swordfish.sendRequest('/projects/business', request, resolve, reject));
         });
+        ipcMain.handle('open-intake-archive', async (_event, id: string) => {
+            const data: any = await new Promise((resolve, reject) => Swordfish.sendRequest('/projects/business', { op: 'get', id }, resolve, reject));
+            if (data.status !== Swordfish.SUCCESS || !data.intake?.archiveFolder) throw new Error('此委托尚无归档目录');
+            const error = await shell.openPath(data.intake.archiveFolder);
+            if (error) throw new Error(error);
+        });
         ipcMain.handle('material-engine', () => {
             const { engine, model } = Swordfish.getScoringEngine(Swordfish.currentPreferences);
             return { engine, model };

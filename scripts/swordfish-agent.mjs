@@ -8,6 +8,8 @@ import { listStyleGuides, getStyleGuide } from '../style-guides/runtime.mjs';
 const usage = `SwordfishEdu Agent CLI (JSON output)
   styles
   style GUIDE_ID
+  intake REQUEST.json
+  discover PATH [PATH...]
   business REQUEST.json
   brief PROJECT
   projects
@@ -63,7 +65,9 @@ async function main() {
         console.log(JSON.stringify(getStyleGuide(args[0]), null, 2)); return;
     }
     let request;
-    if (command === 'business' && args.length === 1) request = { ...JSON.parse(await readFile(args[0], 'utf8')), action: 'business' };
+    if (command === 'intake' && args.length === 1) request = { ...JSON.parse(await readFile(args[0], 'utf8')), action: 'business', op: 'auto-intake' };
+    else if (command === 'discover' && args.length >= 1) request = { action: 'business', op: 'discover', paths: args.map(path => ({path})) };
+    else if (command === 'business' && args.length === 1) request = { ...JSON.parse(await readFile(args[0], 'utf8')), action: 'business' };
     else if (command === 'brief' && args.length === 1) request = { action: 'business', op: 'brief', project: args[0] };
     else if (command === 'projects' && args.length === 0) request = { action: command };
     else if (command === 'read' && args.length >= 1 && args.length <= 3) {

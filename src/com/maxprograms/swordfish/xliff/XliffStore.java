@@ -3297,6 +3297,34 @@ public class XliffStore {
 		}
 	}
 
+    public synchronized void appendSourceFiles(List<String> paths) throws Exception {
+        updateXliff();
+        Document combined = builder.build(xliffFile);
+        long nextFile = 0;
+        for (Element file : combined.getRootElement().getChildren("file")) {
+            try { nextFile = Math.max(nextFile, Long.parseLong(file.getAttributeValue("id"))); }
+            catch (NumberFormatException ignored) { }
+        }
+        try (Statement st=conn.createStatement(); ResultSet rs=st.executeQuery("SELECT COALESCE(MAX(child),0) FROM segments")) { index=rs.next()?rs.getInt(1)+1:0; }
+        for (String path : paths) {
+            Document incoming = builder.build(path);
+            for (Element file : incoming.getRootElement().getChildren("file")) {
+                String id;
+                do { id=Long.toString(++nextFile); } while (containsFileId(combined.getRootElement(),id));
+                file.setAttribute("id",id);
+            }
+            document=incoming;
+            parseDocument();
+            for (Element file : incoming.getRootElement().getChildren("file")) combined.getRootElement().addContent(file);
+        }
+        document=combined;saveXliff();indexSegments();conn.commit();
+    }
+
+    private boolean containsFileId(Element root,String id) {
+        for (Element file : root.getChildren("file")) if (file.getAttributeValue("id").equals(id)) return true;
+        return false;
+    }
+
 	public void updateXliff() throws SQLException, SAXException, IOException, ParserConfigurationException {
 		document = builder.build(xliffFile);
 		document.getRootElement().setAttribute("xmlns:mtc", "urn:oasis:names:tc:xliff:matches:2.0");

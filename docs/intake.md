@@ -208,3 +208,48 @@ Projects 的入口现在叫 **商务工作台**。默认展示应收与实收看
 replaceExisting 只有在用户明确同意替换已有字段时设置 true。textType 为新的 brief 白名单字段，AI Tutor 和外部 Agent 后续可以读取。变更原文/语言或重新分析文件时清除当前分类建议，不让旧材料的分类自动进入新 brief。
 
 aiPolicy 未知、forbidden、local-only 均不发送正文分类。此版本未配置本地模型分类通道，不要绕过限制。没有原文的服务订单不能仅凭项目名执行此分析。
+
+## 一站式自动建项与客户项目归档
+
+日常只需把任务描述与本地路径交给 Agent，不要求用户写 JSON。Agent 使用下述接口完成机械操作，负责从描述/对话/截图中提取确定事实、识别文件角色、自动分析领域并填充空字段。没有明确客户、语言、交期或 AI 权限时集中补问；没有单价可先建项目，不能凭空报价。
+
+```text
+帮我建任务：客户A，项目“产品手册”，目录 /Users/me/Downloads/manual。
+中译英，英式英语，下周五17点交，允许云端AI，按原文每千字符180元。
+```
+
+CLI `discover /absolute/folder` 返回递归清单、文件哈希及是否支持作为原文。随后 `intake /absolute/request.json`。这些 JSON 由 Agent 生成：
+
+```json
+{
+  "description":"用户原始任务描述",
+  "clientName":"客户A",
+  "projectName":"产品手册",
+  "paths":[{"path":"/absolute/source-folder","role":"source"},{"path":"/absolute/reference.pdf","role":"reference"},{"path":"/absolute/chat.png","role":"communication"}],
+  "task":{"srcLang":"zh-CN","tgtLang":"en-GB","deadline":"2026-10-23T17:00:00+08:00","requirementsConfirmed":true,"questions":[],"brief":{"aiPolicy":"allowed","purpose":"用户手册"}},
+  "evidence":[],
+  "pricing":{"basis":"characters","currency":"CNY","rate":"180.00","per":1000,"rounding":"exact","countConfirmed":true}
+}
+```
+
+客户同名（忽略大小写）关联已有 ID；项目按客户 ID + 项目名称匹配。多候选需要指定 clientId/intakeId，不猜测。已有同名 CAT 项目但尚无委托关联时阻止自动重复建项，返回候选；当前不自动接管旧项目。明确的项目名用于逻辑匹配，Agent 不给每个子文件另取一个项目名。
+
+### 文件归档
+
+复制到后端工作目录的 `archive/客户名--ID/项目名--ID/`，分为 `01-source`、`02-reference`、`03-communication`、`04-deliverables`、`05-finance`、`manifests`。源资料按批次及输入序号保留相对子目录，SHA-256 校验，原文件不移动。后两者为用户后续交付/账务资料预留目录，现有导出不会自动转存其中。工作台显示实际路径并能打开。
+
+扫描跳过隐藏文件和 Office 临时文件，不跟随符号链接；每批最多200份、每份100 MB、总计500 MB。source 中不支持的文件会列为待澄清；不要把未解析文件偷偷转为参考资料来凑成功。图片/聊天截图由 Agent 阅读，不当作可解析原文。
+
+### 同项目追加与重试
+
+再次提交同客户同项目的目录：内容哈希已存在的源文件跳过，新内容追加到同一 CAT 项目。相同文件名但内容变化保存新批次并作为新增版本追加，**不会替换旧译文**；Agent 必须说明这是追加版本。需要替换旧版时另行人工处理。旧译文、状态、批注和 Agent 历史保留。
+
+追加要求项目编辑标签关闭、后台任务结束。建立 `business/append-recovery` 恢复副本；失败时恢复，重试依据完成标记避免重复。原 CAT 文件 ID 保持，新文件使用新的 ID；原始目录结构保留在归档，CAT 导出使用唯一文件名以兼容转换器。
+
+返回 outcome：created / appended / unchanged / needs-information / created-quote-needs-information。检查 projectId、addedFiles、skippedFiles 和 archiveFolder 后才能报告完成。新文件范围标记 additionalScopeUnpriced，已确认报价和收款不变，不能按旧价静默多收费。重复调用不重复建客户或项目；请求超时先查询委托状态再以相同客户/项目重试。
+
+### 自动 metadata
+
+从任务描述能确定的字段在 task 中自动填入；已有不同值返回冲突，不覆盖。正文分类：auto-intake 返回 classificationPending 时，Agent 继续 material-sample → 根据正文判断 → material-save → material-autofill。最后一个操作只填空白 domain/textType，标记 metadataProvenance 为 ai-inferred，保留建议ID，不覆盖原字段；unknown 分类保持待判断，不猜。
+
+用户对整个自动流程的授权包括填入有依据的空字段，无需让用户再逐项点击采纳。已有字段替换仍使用明确授权的 material-adopt。未知费用、客户接受报价和实际到账不能靠推断自动确认。原文未允许外部 AI 时跳过分类，仍可归档计数建项。

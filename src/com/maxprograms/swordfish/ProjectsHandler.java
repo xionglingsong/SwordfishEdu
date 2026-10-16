@@ -795,6 +795,23 @@ public class ProjectsHandler implements HttpHandler {
 		return result;
 	}
 
+    static void requireBusinessProjectClosed(String id) throws Exception {
+        if(projectStores.containsKey(id))throw new IOException("Save drafts and close the project's editor tab before appending source files");
+        for(JSONObject process:processes.values())if(Constants.PROCESSING.equals(process.optString(Constants.PROGRESS)))throw new IOException("Wait for background project operations to finish");
+    }
+    static Project getBusinessProject(String id) throws Exception {Project p=getProjects().get(id);if(p==null)throw new IOException("Unknown CAT project");return p;}
+    static void updateBusinessProjectFiles(String id,List<SourceFile> additions) throws Exception {
+        Map<String,Project> projects=getProjects();Project p=projects.get(id);if(p==null)throw new IOException("Unknown CAT project");
+        List<SourceFile> files=p.getFiles();for(SourceFile f:additions)if(!files.contains(f))files.add(f);p.setFiles(files);
+        new ProjectsHandler().saveProjectsList(projects);
+    }
+
+    static JSONArray findBusinessProjectCandidates(String name,String client) throws Exception {
+        JSONArray result=new JSONArray();
+        for(Project p:getProjects().values())if(name.equalsIgnoreCase(p.getDescription().trim()) && (p.getClient().isBlank() || client.equalsIgnoreCase(p.getClient().trim())))result.put(new JSONObject().put("id",p.getId()).put("name",p.getDescription()).put("client",p.getClient()));
+        return result;
+    }
+
     static boolean hasBusinessProject(String id) throws Exception { return getProjects().containsKey(id); }
 
     static void registerBusinessProject(Project project) throws Exception {

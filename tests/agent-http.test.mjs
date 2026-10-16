@@ -111,6 +111,15 @@ test('real Java server + CLI: read/apply/undo, editor conflict, authentication',
         result=await cli(['read',intake.projectId],env);assert.equal(result.code,0,result.err);assert.equal(JSON.parse(result.out).translationBrief.brief.purpose,'Public guide');
         intake=(await business({op:'save',intake:{id:intake.id,revision:intake.revision,brief:{purpose:'Private guide',aiPolicy:'forbidden'},requirementsConfirmed:true}})).intake;
         result=await cli(['read',intake.projectId],env);assert.equal(result.code,1);assert.match(result.err,/forbids external AI/);
+        const autoFolder=join(home,'auto-sources');await mkdir(autoFolder);await writeFile(join(autoFolder,'first.txt'),'Technical operating instructions.');
+        const autoRequest=join(home,'auto.json');
+        await writeFile(autoRequest,JSON.stringify({clientName:'Automatic client',projectName:'Automatic project',description:'Customer brief',paths:[{path:autoFolder}],task:{srcLang:'en',tgtLang:'zh-CN',deadline:'2026-10-23T17:00:00+08:00',requirementsConfirmed:true,brief:{aiPolicy:'allowed'}}}));
+        let auto=await cli(['intake',autoRequest],env);assert.equal(auto.code,0,auto.err);let autoRow=JSON.parse(auto.out).intake;
+        const autoSample=await business({op:'material-sample',id:autoRow.id,revision:autoRow.revision});const af=autoSample.files[0],ae=af.excerpts[0];
+        autoRow=(await business({op:'material-save',id:autoRow.id,revision:autoRow.revision,analysisId:autoSample.analysisId,origin:'test-agent',files:[{fileId:af.fileId,domain:'Software',textType:'Instructions',confidence:'medium',rationale:'Fixture',evidence:[{segment:ae.segment,quote:ae.text}],questions:[]}]})).intake;
+        autoRow=(await business({op:'material-autofill',id:autoRow.id,revision:autoRow.revision,suggestionId:autoRow.materialAnalysis.id})).intake;
+        assert.equal(autoRow.brief.domain,'Software');assert.equal(autoRow.metadataProvenance.domain.status,'ai-inferred');assert.equal(autoRow.requirementsConfirmed,true);
+        await writeFile(join(autoFolder,'second.txt'),'Second document.');auto=await cli(['intake',autoRequest],env);assert.equal(auto.code,0,auto.err);assert.equal(JSON.parse(auto.out).outcome,'appended');assert.equal(JSON.parse(auto.out).projectId,autoRow.projectId);
         const webWrite=await fetch(url+'/projects/business',{method:'POST',headers:{Origin:'https://example.com'},body:JSON.stringify({op:'list'})});assert.equal(webWrite.status,403);
 
     } finally {

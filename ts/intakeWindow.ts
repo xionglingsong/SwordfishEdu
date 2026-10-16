@@ -77,6 +77,7 @@ export class IntakeWindow {
             await this.mutate({op:'material-adopt',suggestionId:this.current.materialAnalysis?.id,fields,replaceExisting:replace});
             this.message('建议已采纳。请核对 brief 并重新确认任务要求后使用 AI。');
         });
+        this.bind('openArchive',async()=>{if(!this.current?.id)throw Error('先保存委托');await ipcRenderer.invoke('open-intake-archive',this.current.id);});
         this.bind('analyze',async()=>{await this.save();await this.mutate({op:'analyze'});});
         this.bind('quote',async()=>{
             const pricing:any={};for(const key of ['basis','currency','rate','rounding','minimum','surcharge','discount'])pricing[key]=this.value(key);
@@ -206,8 +207,9 @@ export class IntakeWindow {
         const times=this.input('timeEntry') as HTMLSelectElement;times.replaceChildren(new Option('选择需作废的工时',''));
         (this.current.timeEntries||[]).filter((e:any)=>!e.voidedAt).forEach((e:any)=>times.add(new Option(`${e.date} · ${e.minutes} 分钟 · ${e.activity||''}`,e.id)));
         document.getElementById('timeHistory')!.textContent=JSON.stringify(this.current.timeEntries||[],null,2);
+        document.getElementById('archiveInfo')!.textContent=this.current.archiveFolder?'归档：'+this.current.archiveFolder+(this.current.additionalScopeUnpriced?'；新增文件范围尚未计价，原确认报价未改变。':''):'Agent 一站式导入后自动建立客户／项目归档。';
         this.renderFiles();
-        document.getElementById('evidence')!.textContent=JSON.stringify({evidence:this.current.evidence||[],materials:this.current.materials||[]},null,2);
+        document.getElementById('evidence')!.textContent=JSON.stringify({evidence:this.current.evidence||[],materials:this.current.materials||[],intakeSources:this.current.intakeSources||[],metadataProvenance:this.current.metadataProvenance||{}},null,2);
         const a=this.current.analysis;document.getElementById('analysis')!.textContent=a?JSON.stringify({totals:a.totals,files:a.files.map((f:any)=>({name:f.name,role:f.role,words:f.words,characters:f.characters,han:f.han,segments:f.segments})),warnings:a.warnings},null,2):'尚未解析文件';
         const materials=document.getElementById('materialResults')!;materials.replaceChildren();
         const suggestion=this.current.materialAnalysis;
