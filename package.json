@@ -46,7 +46,9 @@
             "node_modules/**/*",
             "review/**/*",
             "package.json",
-            "style-guides/**/*"
+            "style-guides/**/*",
+            "docs/**/*",
+            ".agents/skills/**/*"
         ],
         "extraResources": [
             {

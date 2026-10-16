@@ -20,6 +20,7 @@ export class IntakeWindow {
     constructor() {
         document.getElementById('details')!.addEventListener('input', () => { this.dirty=true; });
         window.addEventListener('beforeunload', event => { if((this.dirty||this.deliveryDirty) && !confirm('有未保存的委托修改，仍要关闭？')) { event.preventDefault(); event.returnValue=false; } });
+        document.getElementById('agentHelp')!.addEventListener('click',()=>ipcRenderer.send('show-agent-guide'));
         ipcRenderer.send('get-theme');
         ipcRenderer.on('set-theme', (_event, theme: string) => { (document.getElementById('theme') as HTMLLinkElement).href=theme; });
         ipcRenderer.invoke('get-style-guides').then((guides: any[]) => {

@@ -98,6 +98,7 @@ export class Swordfish {
     static downloadLink: string;
     static checkingUpdates = false;
     static intakeWindow: BrowserWindow;
+    static agentGuideWindow: BrowserWindow;
 
     static currentDefaults: Rectangle;
     static currentPreferences: Preferences = {
@@ -1325,6 +1326,9 @@ export class Swordfish {
             Swordfish.getAiEngines(event);
         });
         ipcMain.handle('get-style-guides', () => listStyleGuides());
+        ipcMain.on('show-agent-guide', () => Swordfish.showAgentGuide());
+        ipcMain.handle('agent-guide-copy', (_event, text: unknown) => { if (typeof text !== 'string' || text.length > 30000) throw new Error('Invalid tutorial text'); clipboard.writeText(text); });
+        ipcMain.handle('agent-guide-context', () => ({root: app.getAppPath(), packaged: app.isPackaged, agentEnabled: process.env.SWORDFISH_AGENT_ENABLED === '1', platform: process.platform}));
         ipcMain.on('show-intake', () => Swordfish.showIntake());
         ipcMain.handle('business-request', async (_event, request: any) => {
             return await new Promise((resolve, reject) => Swordfish.sendRequest('/projects/business', request, resolve, reject));
@@ -1909,6 +1913,7 @@ export class Swordfish {
         ]);
         let helpMenu: Menu = Menu.buildFromTemplate([
             { label: 'Swordfish User Guide', accelerator: 'F1', click: () => { this.showHelp(); } },
+            { label: 'Agent / CLI / Skill 使用教程', click: () => { Swordfish.showAgentGuide(); } },
             { label: 'Getting Started Guide', click: () => { Swordfish.showGettingStarted(); } },
             new MenuItem({ type: 'separator' }),
             { label: 'Check for Updates...', click: () => { this.checkUpdates(false); } },
@@ -3353,6 +3358,14 @@ export class Swordfish {
             let css: string = readFileSync(Swordfish.currentCss.substring('file://'.length), { encoding: 'utf8' });
             licenseWindow.webContents.insertCSS(css.toString());
         });
+    }
+
+    static showAgentGuide(): void {
+        if (Swordfish.agentGuideWindow && !Swordfish.agentGuideWindow.isDestroyed()) { Swordfish.agentGuideWindow.focus(); return; }
+        Swordfish.agentGuideWindow = new BrowserWindow({parent: Swordfish.mainWindow, width: 1040, height: 800,
+            title: 'Agent、CLI 与 Skill 使用教程', webPreferences: {nodeIntegration: true, contextIsolation: false}});
+        Swordfish.agentGuideWindow.setMenu(null);
+        Swordfish.agentGuideWindow.loadURL(pathToFileURL(join(app.getAppPath(), 'html', 'en', 'agentGuide.html')).href);
     }
 
     static showIntake(): void {

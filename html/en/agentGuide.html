@@ -1,0 +1,42 @@
+<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"><title>Agent、CLI 与 Skill 使用教程</title>
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'">
+<link id="theme" rel="stylesheet" href="../../css/light.css"><link rel="stylesheet" href="../../css/fonts.css">
+<style>body{margin:0;font-family:inherit;line-height:1.75}main{display:grid;grid-template-columns:190px minmax(0,1fr);height:100vh}nav{padding:24px 16px;border-right:1px solid #8885;overflow:auto}nav a{display:block;margin:9px 0;color:inherit}article{padding:28px 36px;overflow:auto;scroll-behavior:smooth}h1{font-size:26px}h2{margin-top:32px;font-size:20px}h3{font-size:16px}pre{white-space:pre-wrap;overflow-wrap:anywhere;padding:12px;border:1px solid #8885;border-radius:6px;font-size:13px}table{border-collapse:collapse;width:100%}th,td{padding:9px;text-align:left;border-bottom:1px solid #8885}button{padding:6px 12px;cursor:pointer}.hint{font-size:13px;opacity:.78}.notice{padding:12px;border-left:3px solid #168070}#copyStatus{min-height:24px}section{scroll-margin-top:16px}@media(max-width:700px){main{grid-template-columns:1fr}nav{display:none}article{padding:20px}}</style></head>
+<body><main><nav aria-label="教程目录"><strong>SwordfishEdu</strong><a href="#start">从这里开始</a><a href="#concepts">三个工具怎么配合</a><a href="#skills">让 Agent 读取 Skill</a><a href="#intake">一句话创建任务</a><a href="#edit">批量修改与撤销</a><a href="#business">商务与材料分析</a><a href="#cli">CLI 命令速查</a><a href="#trouble">常见问题</a></nav><article>
+<h1>Agent、CLI 与 Skill 使用教程</h1><p>你描述任务，Agent 理解并执行，SwordfishEdu 保存项目和译文。本页离线可用，复制按钮只复制文本，不会执行命令。</p><div id="copyStatus" role="status" aria-live="polite"></div>
+<section id="start"><h2>1. 启动 Agent 模式</h2><p id="environment" class="notice">正在读取运行环境…</p><p>macOS 从 Agent 或自动化工具启动时，使用独立启动命令；命令结束后窗口继续运行。已有应用时先保存并正常退出，再启动新版本。</p><pre id="startCommand">正在加载…</pre><button data-copy="startCommand">复制启动命令</button><p class="hint">需要本地源码、项目依赖及 JDK 25。安装版教程仍可阅读，但当前 CLI 流程需源码目录；不能把 app.asar 当作源码工作区。</p></section>
+<section id="concepts"><h2>2. Agent、CLI、Skill 各做什么</h2><table><tr><th>名称</th><th>作用</th><th>你需要做什么</th></tr><tr><td>Agent</td><td>理解自然语言、读取材料、提出修改和调用工具，例如你当前使用的编程助手。</td><td>告诉它任务和资料路径。</td></tr><tr><td>CLI</td><td>本地命令接口，负责读取、校验、归档、建项、报价、写回和撤销。</td><td>通常由 Agent 调用，不必手写 JSON。</td></tr><tr><td>Skill</td><td>Agent 的操作说明，规定接口、字段含义、确认边界及验证步骤。</td><td>首次让 Agent 读取对应 Skill。</td></tr></table><p>应用内 AI Tutor 使用首选项里配置的模型；外部 Agent 使用自身模型。选择外部 Agent 不会自动替你配置应用内模型。</p></section>
+<section id="skills"><h2>3. 首次告诉 Agent 怎么操作</h2><p>将下面文字发给有本地文件与命令能力的 Agent。这里是读取说明，不会自动安装或注册第三方 Agent。</p><pre id="skillPrompt">正在加载…</pre><button data-copy="skillPrompt">复制 Skill 引导</button><p>接单 Skill 负责客户、委托、文件和账务；编辑 Skill 负责按任务简报批量改译文。每次任务仍以你的要求为准。</p></section>
+<section id="intake"><h2>4. 一句话创建任务</h2><pre id="intakePrompt">帮我建立翻译任务：
+客户：请替换为实际客户
+项目：请替换为实际项目名称
+任务描述：中译英，英式英语，面向普通读者。
+资料路径：/请替换为实际绝对路径
+交期：请填写具体日期、时间和时区。
+AI 使用：请按客户实际授权填写。
+计费：如已约定，写明币种、按词或字符、单价和取整方式；尚未约定就先不报价。
+
+自动归档、计数、填写有依据的 metadata 并建项；同客户同项目补充文件归入原项目。只有关键缺项和冲突再集中问我。</pre><button data-copy="intakePrompt">复制建项示例</button><p>可以同时附上聊天截图。Agent 会读取截图；程序本身不自动 OCR。目录混有原文、参考文件和沟通截图时，应明确角色，无法判断的会询问。</p><p>同内容文件跳过；同名新内容作为追加版本保存，不覆盖旧译文。归档只复制，不移动原文件。已确认报价不会因新增文件自动涨价，新增范围另行计价。</p><p>归档入口：<strong>Projects → 商务工作台 → 选择委托 → 打开项目归档文件夹</strong>。交付与账务目录为预留目录，导出不会自动存入。</p></section>
+<section id="edit"><h2>5. 批量改译文、预览与撤销</h2><p class="notice">执行 Agent 正文读取、批量修改或追加文件前，保存并关闭目标项目的编辑标签；应用本身保持运行。不要强制结束进程。</p><pre id="editPrompt">读取项目的翻译 brief，按其中指定的术语和风格，审阅未确认译文。
+保持原意、数字、代码和内联标签，先列出修改前后与理由，不写入。
+
+（核对后）应用刚才的修改，告诉我修改数量和 batchId，不写入 TM。
+（需要回退时）撤销刚才那个 batchId；不要覆盖之后的人工修改。</pre><button data-copy="editPrompt">复制审校示例</button><p>单批最多 200 段。版本冲突、锁定段或标签变化会拒绝整批；多批操作不是一个事务。Agent 批次用 CLI 撤销，不属于编辑器的 Cmd+Z 历史。</p></section>
+<section id="business"><h2>6. 商务、风格与材料分析</h2><p>材料分析按文件给出领域、文本类型、依据和覆盖范围。每份源文件最多取 12 段、每段 400 字符，并非保证阅读全文。自动建项可填空白字段并标记 AI 推断，已有字段不静默覆盖。</p><p>风格指南可在 AI 助手选择，也可让 Agent 读取。支持阮一峰、yikeke、微软不同地区／文体、Google、Apple，以及 Red Hat 两种用途。</p><pre id="businessPrompt">按付款到账日期，汇总本月各币种实收，并列出逾期客户。
+这个服务订单今天实际做了 90 分钟审校，请记录工时。
+按客户指定的微软 en-GB 指南检查译文，保留代码和产品名。</pre><button data-copy="businessPrompt">复制业务示例</button><p>估算不代表客户接受报价，登记收款需要真实到账依据。合同额时薪和实收时薪不等于净利润。付款到期日与交稿日分开，多币种不直接相加。</p><p>客户联系、税号和金额不自动进入翻译 brief。AI 禁止或仅本地的限制会阻止当前外部模型入口；尚未配置自动的受信任本地模型通道。</p></section>
+<section id="cli"><h2>7. CLI 命令速查</h2><p>在源码根目录执行。大写参数为占位符，需替换为真实值。修改请求 JSON 由 Agent 按 Skill 生成。</p><pre id="cliCommands">node scripts/swordfish-agent.mjs --help
+node scripts/swordfish-agent.mjs styles
+node scripts/swordfish-agent.mjs style microsoft-en-gb
+node scripts/swordfish-agent.mjs projects
+node scripts/swordfish-agent.mjs discover "/实际资料路径"
+node scripts/swordfish-agent.mjs intake "/实际请求.json"
+node scripts/swordfish-agent.mjs brief PROJECT_ID
+node scripts/swordfish-agent.mjs read PROJECT_ID 0 100
+node scripts/swordfish-agent.mjs validate "/实际修改.json"
+node scripts/swordfish-agent.mjs apply "/实际修改.json"
+node scripts/swordfish-agent.mjs history PROJECT_ID
+node scripts/swordfish-agent.mjs undo PROJECT_ID BATCH_ID
+node scripts/swordfish-agent.mjs business "/实际业务请求.json"</pre><button data-copy="cliCommands">复制命令速查（需替换参数）</button><p class="hint">styles/style 离线可用；其余操作需要运行后端。不要把本地访问令牌、模型密钥粘贴到聊天或提交到仓库。</p></section>
+<section id="trouble"><h2>8. 常见问题</h2><table><tr><th>现象</th><th>处理</th></tr><tr><td>连接失败／没有令牌／HTTP 403</td><td>确认以 Agent 模式运行，使用当前源码版本；不要手工复制令牌。</td></tr><tr><td>提示关闭项目标签</td><td>先保存译文，关闭该项目标签，保留主窗口。</td></tr><tr><td>版本冲突</td><td>重新读取当前记录，再判断修改；不能改 revision 强行覆盖。</td></tr><tr><td>写请求超时</td><td>先查询项目、委托或批次历史，确认是否已成功。不要换新 ID 盲目重试。</td></tr><tr><td>材料分类无结果</td><td>先解析文件、保存 AI 授权并配置可用 LLM；扫描件需要先做 OCR。</td></tr><tr><td>重复或同名项目</td><td>提供真实客户／委托 ID；旧项目未关联委托时先核对，不通过改名绕过冲突。</td></tr><tr><td>macOS 关闭 Agent 后应用也退出</td><td>改用上面的 npm run open:agent 独立启动。日志位于 ~/Library/Logs/SwordfishEdu。</td></tr></table><p>完整接口说明随安装资源提供在 docs 中；本教程覆盖日常用法。程序不会因为你复制本页示例而自动执行任务。</p></section>
+</article></main><script>const {AgentGuide}=require('../../js/agentGuide.js');new AgentGuide();</script></body></html>

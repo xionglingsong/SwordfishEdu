@@ -416,3 +416,7 @@ Eclipse Public License 1.0 (EPL-1.0) — 开源协议，可免费使用、修改
 在 Agent 或自动化工具中打开桌面应用，使用 `npm run open:agent`。此命令先编译，再经 macOS LaunchServices 启动，命令退出后应用继续运行。前台开发调试仍可用 `npm run start:agent`，其生命周期依赖终端会话。
 
 启动日志保存在 `~/Library/Logs/SwordfishEdu/stdout.log` 和 `stderr.log`。已有实例时不会强制退出；如需加载新代码，先保存工作并正常退出旧实例，再启动。
+
+## 应用内 Agent 使用教程
+
+Help → Agent / CLI / Skill 使用教程，或商务工作台左侧“Agent 使用教程”。离线提供启动、Skill 引导、自然语言建项、批量审校/撤销、商务查询及故障排查，支持复制示例与命令。源码路径按当前运行位置显示，安装版提示使用本地源码目录。
