@@ -8,6 +8,8 @@ import { listStyleGuides, getStyleGuide } from '../style-guides/runtime.mjs';
 const usage = `SwordfishEdu Agent CLI (JSON output)
   styles
   style GUIDE_ID
+  business REQUEST.json
+  brief PROJECT
   projects
   read PROJECT [OFFSET=0] [LIMIT=100]
   validate PATCH.json
@@ -61,7 +63,9 @@ async function main() {
         console.log(JSON.stringify(getStyleGuide(args[0]), null, 2)); return;
     }
     let request;
-    if (command === 'projects' && args.length === 0) request = { action: command };
+    if (command === 'business' && args.length === 1) request = { ...JSON.parse(await readFile(args[0], 'utf8')), action: 'business' };
+    else if (command === 'brief' && args.length === 1) request = { action: 'business', op: 'brief', project: args[0] };
+    else if (command === 'projects' && args.length === 0) request = { action: command };
     else if (command === 'read' && args.length >= 1 && args.length <= 3) {
         const offset = Number(args[1] ?? 0), limit = Number(args[2] ?? 100);
         if (!Number.isInteger(offset) || !Number.isInteger(limit)) throw new Error('OFFSET and LIMIT must be integers');

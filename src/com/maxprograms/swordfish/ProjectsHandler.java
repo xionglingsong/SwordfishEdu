@@ -87,6 +87,9 @@ public class ProjectsHandler implements HttpHandler {
 				request = TmsServer.readRequestBody(is);
 			}
 			JSONObject response;
+            if (uri.getPath().equals("/projects/business") && (!"POST".equals(exchange.getRequestMethod()) || exchange.getRequestHeaders().containsKey("Origin"))) {
+                exchange.sendResponseHeaders(403, -1); exchange.close(); return;
+            }
             if (uri.getPath().startsWith("/agent")) {
                 if (!"POST".equals(exchange.getRequestMethod()) || exchange.getRequestHeaders().containsKey("Origin")
                         || !TmsServer.isAgentAuthorized(exchange.getRequestHeaders().getFirst("X-Swordfish-Agent"))) {
@@ -119,7 +122,9 @@ public class ProjectsHandler implements HttpHandler {
 	private JSONObject processRequest(String url, String request) {
 		JSONObject response = new JSONObject();
 		try {
-			if ("/agent".equals(url)) {
+			if ("/projects/business".equals(url)) {
+                response = BusinessStore.execute(new JSONObject(request));
+            } else if ("/agent".equals(url)) {
                 response = agentRequest(new JSONObject(request));
             } else if ("/projects/create".equals(url)) {
 				response = createProject(request);
@@ -278,6 +283,7 @@ public class ProjectsHandler implements HttpHandler {
 	}
 
     private JSONObject agentRequest(JSONObject request) throws Exception {
+        if ("business".equals(request.getString("action"))) return BusinessStore.execute(request);
         if ("projects".equals(request.getString("action"))) return listProjects();
         String id = request.getString("project");
         if (projectStores.containsKey(id)) {
@@ -290,6 +296,11 @@ public class ProjectsHandler implements HttpHandler {
         }
         Project project = getProjects().get(id);
         if (project == null) throw new IOException("Unknown project");
+        JSONObject briefData = BusinessStore.briefForProject(id);
+        JSONObject brief = briefData.getJSONObject("brief");
+        if ("read".equals(request.getString("action")) && ((!briefData.optBoolean("requirementsConfirmed", true)) || Set.of("forbidden", "local-only").contains(brief.optString("aiPolicy")))) {
+            throw new IOException("Commission forbids external AI content access. Use approved local/manual workflow.");
+        }
         XliffStore store = new XliffStore(project.getXliff(), project.getSourceLang().getCode(),
                 project.getTargetLang().getCode());
         try {
@@ -305,6 +316,7 @@ public class ProjectsHandler implements HttpHandler {
                 }
             }
             result.put("project", id).put("srcLang", store.getSrcLang()).put("tgtLang", store.getTgtLang());
+            if ("read".equals(request.getString("action"))) result.put("translationBrief", BusinessStore.briefForProject(id));
             return result;
         } finally {
             store.close();
@@ -782,6 +794,15 @@ public class ProjectsHandler implements HttpHandler {
 		}
 		return result;
 	}
+
+    static boolean hasBusinessProject(String id) throws Exception { return getProjects().containsKey(id); }
+
+    static void registerBusinessProject(Project project) throws Exception {
+        Map<String, Project> projects = getProjects();
+        if (projects.containsKey(project.getId())) return;
+        projects.put(project.getId(), project);
+        new ProjectsHandler().saveProjectsList(projects);
+    }
 
 	private static synchronized Map<String, Project> getProjects()
 			throws IOException, JSONException, SAXException, ParserConfigurationException {

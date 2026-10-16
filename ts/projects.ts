@@ -34,6 +34,12 @@ export class ProjectsView {
         this.topBar.className = 'toolbar';
         this.container.appendChild(this.topBar);
 
+        const intakeButton = document.createElement('button');
+        intakeButton.innerText = '接单建项';
+        intakeButton.title = '客户委托、文件计数、报价与翻译简报';
+        intakeButton.addEventListener('click', () => ipcRenderer.send('show-intake'));
+        this.topBar.appendChild(intakeButton);
+
         let addFileButton = document.createElement('a');
         addFileButton.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"><path d="m 21,16.166667 h -2.454545 v -2.5 h -1.636364 v 2.5 h -2.454546 v 1.666666 h 2.454546 v 2.5 h 1.636364 v -2.5 H 21 Z m -5.727273,4.166666 V 22 H 3 V 2 h 8.336455 c 2.587909,0 8.027181,6.0191667 8.027181,8.011667 V 12 h -1.636363 v -1.285833 c 0,-3.4225003 -4.909091,-2.0475003 -4.909091,-2.0475003 0,0 1.242,-5 -2.158364,-5 H 4.6363636 V 20.333333 Z" /></svg>' +
             '<span class="tooltiptext bottomTooltip">Translate/Review Single File</span>';

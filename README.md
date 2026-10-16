@@ -199,6 +199,12 @@ AI 助手可选择阮一峰、yikeke、微软通用英文、微软英式英语�
 
 ---
 
+## 接单建项与商务记录
+
+Projects 新增“接单建项”：客户关联、委托简报、证据和待确认项、源文件分析、按词／字符／汉字／总价报价、幂等创建项目及分次收款。客户对话和截图由外部 Agent 提取，应用负责持久化、计算与核对。AI Tutor 和 Agent 读取筛选后的项目 brief，不带联系人或财务信息。
+
+[接单流程与接口](docs/intake.md) · [接单 Agent Skill](.agents/skills/swordfish-intake/SKILL.md)
+
 ## 专业 CAT 功能
 
 ### 翻译编辑器

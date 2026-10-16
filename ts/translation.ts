@@ -2153,6 +2153,7 @@ export class TranslationView {
         this.aiAssistant = new AiAssistant(this.aiContainer, () => {
             let sourceCell = this.currentRow?.getElementsByClassName('source')[0] as HTMLTableCellElement | null;
             return {
+                projectId: this.projectId,
                 sourceText: sourceCell?.innerText || '',
                 targetText: this.currentCell?.innerText || '',
                 srcLang: this.srcLang,

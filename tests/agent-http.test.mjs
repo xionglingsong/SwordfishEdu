@@ -82,6 +82,29 @@ test('real Java server + CLI: read/apply/undo, editor conflict, authentication',
         await fetch(url+'/projects/close',{method:'POST',body:JSON.stringify({project:'p'})});
         result=await cli(['history','p'],env); assert.equal(result.code,0,result.err); assert.equal(JSON.parse(result.out).batches.length,2);
         assert.ok(JSON.parse(result.out).batches.some(b => b.instruction.includes('Style: yikeke@1.0.0')));
+        // Commission API via the same authenticated CLI used by an external agent.
+        const requestFile=join(home,'business-request.json');
+        async function business(request) {
+            await writeFile(requestFile,JSON.stringify(request));
+            const result=await cli(['business',requestFile],env);
+            assert.equal(result.code,0,result.err);
+            return JSON.parse(result.out);
+        }
+        const client=(await business({op:'client-save',client:{name:'Integration customer',email:'private@example.test'}})).client;
+        const source=join(home,'commission.txt');await writeFile(source,'Hello world.\n');
+        let intake=(await business({op:'save',intake:{name:'Integration commission',clientId:client.id,srcLang:'en',tgtLang:'zh-CN',deadline:'2026-10-23T17:00:00+08:00',files:[{path:source,role:'source'}],brief:{purpose:'Public guide',aiPolicy:'allowed'},notes:'SECRET PRICE'}})).intake;
+        intake=(await business({op:'analyze',id:intake.id,revision:intake.revision})).intake;
+        intake=(await business({op:'save',intake:{id:intake.id,revision:intake.revision,requirementsConfirmed:true}})).intake;
+        const create={op:'create',id:intake.id,revision:intake.revision};
+        intake=(await business(create)).intake;
+        assert.equal((await business(create)).projectId,intake.projectId);
+        result=await cli(['brief',intake.projectId],env);assert.equal(result.code,0,result.err);
+        assert.equal(JSON.parse(result.out).brief.purpose,'Public guide');assert.doesNotMatch(result.out,/private@example|SECRET PRICE/);
+        result=await cli(['read',intake.projectId],env);assert.equal(result.code,0,result.err);assert.equal(JSON.parse(result.out).translationBrief.brief.purpose,'Public guide');
+        intake=(await business({op:'save',intake:{id:intake.id,revision:intake.revision,brief:{purpose:'Private guide',aiPolicy:'forbidden'},requirementsConfirmed:true}})).intake;
+        result=await cli(['read',intake.projectId],env);assert.equal(result.code,1);assert.match(result.err,/forbids external AI/);
+        const webWrite=await fetch(url+'/projects/business',{method:'POST',headers:{Origin:'https://example.com'},body:JSON.stringify({op:'list'})});assert.equal(webWrite.status,403);
+
     } finally {
         if (server.exitCode === null && server.signalCode === null) {
             const exited = new Promise(r => server.once('exit', r));

@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="zh-CN"><head><meta charset="UTF-8"><title>接单建项</title>
+<link id="theme" rel="stylesheet" href="../../css/light.css"><link rel="stylesheet" href="../../css/fonts.css">
+<style>
+body{margin:0;font-family:inherit} main{display:grid;grid-template-columns:240px 1fr;height:100vh} aside{padding:16px;border-right:1px solid #8885;overflow:auto} article{padding:24px;overflow:auto}h1{font-size:23px;margin:0 0 8px}h2{font-size:17px;margin:24px 0 12px}.hint{opacity:.72;font-size:12px;line-height:1.6}.grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}label{display:flex;flex-direction:column;gap:5px;font-size:13px}input,select,textarea{box-sizing:border-box;width:100%;padding:7px;font:inherit}textarea{min-height:65px;resize:vertical}.actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px}button{padding:7px 12px;cursor:pointer}.entry{width:100%;text-align:left;margin-top:8px}.selected{border:2px solid #168070}pre{white-space:pre-wrap;overflow-wrap:anywhere;font:inherit;font-size:12px}#message{position:sticky;top:0;padding:10px;background:#eef5f3;color:#16352a;z-index:1}#details[hidden]{display:none}#fileList{line-height:1.8;font-size:13px}.wide{grid-column:1/-1}.check{flex-direction:row;align-items:center}.check input{width:auto}details{margin-top:14px}table{border-collapse:collapse;width:100%;font-size:12px}td,th{padding:7px;text-align:left;border-bottom:1px solid #8885}
+</style></head><body><main><aside><h2>翻译委托</h2><button id="new">新建委托</button><button id="refresh">刷新</button><div id="list"></div><p class="hint">将客户对话或截图交给 Agent，使用接单 Skill 创建草稿。这里用于核对、补全和执行。</p></aside>
+<article><h1>接单建项</h1><div id="message" role="status">选择或新建一份委托。</div><section id="details" hidden>
+<h2>客户与任务</h2><div class="grid">
+<label>项目名称<input id="name"></label><label>客户<select id="clientId"></select></label>
+<label>源语言<input id="srcLang" placeholder="zh-CN"></label><label>目标语言<input id="tgtLang" placeholder="en-GB"></label>
+<label>截止时间（含时区）<input id="deadline" placeholder="2026-10-23T17:00:00+08:00"></label><label>客户订单号<input id="orderNumber"></label>
+<label>服务类型<input id="service" placeholder="翻译／审校"></label><label>付款条件<input id="paymentTerms" placeholder="例如交付后 30 天"></label></div>
+<details><summary>新增客户</summary><div class="grid"><label>客户名称<input id="clientName"></label><label>联系人<input id="clientContact"></label><label>邮箱<input id="clientEmail"></label><label>电话<input id="clientPhone"></label></div><button id="saveClient">保存客户</button></details>
+<h2>翻译简报</h2><p class="hint">只有本区域和语言对进入 AI 上下文；联系方式、价格、收款及原始对话不发送。允许云端模型前请核对客户要求。</p><div class="grid">
+<label>用途<textarea id="purpose"></textarea></label><label>目标读者<textarea id="audience"></textarea></label>
+<label>专业领域<input id="domain"></label><label>语气<input id="tone"></label>
+<label>风格指南<select id="styleGuide"></select></label><label>AI 使用限制<select id="aiPolicy"><option value="">待确认</option><option value="allowed">允许外部 AI</option><option value="local-only">仅本地模型</option><option value="forbidden">禁止 AI</option></select></label>
+<label>术语要求<textarea id="terminology"></textarea></label><label>保留不译内容<textarea id="doNotTranslate"></textarea></label>
+<label>交付要求<textarea id="delivery"></textarea></label><label>其他翻译要求<textarea id="instructions"></textarea></label></div>
+<h2>文件与需求依据</h2><div class="actions"><button id="sourceFiles">添加原文</button><button id="referenceFiles">添加参考资料</button><button id="clearFiles">清空文件选择</button></div><div id="fileList"></div>
+<label>待确认问题（每行一项）<textarea id="questions"></textarea></label><label>商务备注（不进入 AI brief）<textarea id="notes"></textarea></label>
+<details><summary>Agent 提取依据与材料引用</summary><pre id="evidence"></pre></details>
+<div class="actions"><button id="save">保存草稿</button><button id="analyze">解析并计数</button></div><pre id="analysis"></pre>
+<label class="check"><input id="requirementsConfirmed" type="checkbox">任务要求、语言、文件和交期已经确认</label>
+<h2>报价</h2><div class="grid"><label>计费口径<select id="basis"><option value="characters">非空白字符（含标点数字）</option><option value="words">CAT 原文词数</option><option value="han">汉字 Unicode 字符数</option><option value="fixed">项目总价</option></select></label><label>币种<select id="currency"><option>CNY</option><option>USD</option><option>GBP</option><option>EUR</option><option>HKD</option><option>AUD</option><option>CAD</option></select></label>
+<label>单价／总价<input id="rate" inputmode="decimal"></label><label>单位数量<select id="per"><option value="1000">每 1000</option><option value="1">每 1</option></select></label>
+<label>数量舍入<select id="rounding"><option value="exact">按实际数量</option><option value="ceil-block">不足一个计费单位向上取整</option></select></label><label>最低收费<input id="minimum" value="0"></label><label>附加费<input id="surcharge" value="0"></label><label>折扣金额<input id="discount" value="0"></label></div>
+<label class="check"><input id="countConfirmed" type="checkbox">已核对解析范围；图片文字、隐藏内容等可能未计入</label>
+<div class="actions"><button id="quote">计算报价草案</button><button id="confirmQuote">确认当前报价</button><button id="create">创建 CAT 项目</button></div><pre id="quotes"></pre>
+<h2>应收与收款</h2><pre id="balance"></pre><div class="grid"><label>本次到账金额<input id="paymentAmount" inputmode="decimal"></label><label>到账日期<input id="paymentDate" type="date"></label><label>到账币种<input id="paymentCurrency" placeholder="CNY"></label><label>收款备注<input id="paymentNote"></label></div><button id="payment">登记收款</button><pre id="payments"></pre>
+</section></article></main><script>const {IntakeWindow}=require('../../js/intakeWindow.js');new IntakeWindow();</script></body></html>

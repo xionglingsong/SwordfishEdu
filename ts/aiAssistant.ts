@@ -12,6 +12,7 @@ interface EngineInfo {
 }
 
 export interface SegmentContext {
+    projectId?: string;
     sourceText: string;
     targetText: string;
     srcLang: string;
@@ -231,6 +232,7 @@ export class AiAssistant {
         ipcRenderer.send('ai-chat', {
             messages: this.messages,
             engine: engine,
+            projectId: context.projectId,
             styleGuide: this.styleSelect.value,
             sourceText: context.sourceText,
             targetText: context.targetText,

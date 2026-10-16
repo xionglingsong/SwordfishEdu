@@ -1,0 +1,52 @@
+// Run with: env -u ELECTRON_RUN_AS_NODE node_modules/.bin/electron tests/intake-ui-smoke.mjs
+import { app, BrowserWindow, ipcMain } from 'electron';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { resolve, join, delimiter } from 'node:path';
+import { spawn } from 'node:child_process';
+import { readdirSync } from 'node:fs';
+import http from 'node:http';
+import net from 'node:net';
+import assert from 'node:assert/strict';
+import { listStyleGuides } from '../style-guides/runtime.mjs';
+const root=resolve(import.meta.dirname,'..');
+const home=mkdtempSync(join(tmpdir(),'swordfish-intake-ui-'));
+app.setPath('userData',join(home,'electron'));
+app.whenReady().then(async()=>{
+ let server,window;const timer=setTimeout(()=>{console.error('UI test timeout');server?.kill();app.exit(1);},30000);
+ try {
+  const settings=join(home,process.platform==='darwin'?'Library/Application Support/Swordfish':'.config/Swordfish');mkdirSync(settings,{recursive:true});
+  writeFileSync(join(settings,'preferences.json'),JSON.stringify({catalog:join(root,'catalog/catalog.xml'),srx:join(root,'srx/default.srx')}));
+  const socket=net.createServer();await new Promise(r=>socket.listen(0,'127.0.0.1',r));const port=socket.address().port;await new Promise(r=>socket.close(r));
+  const jars=readdirSync(join(root,'jars')).filter(f=>f.endsWith('.jar')&&f!=='swordfish.jar').map(f=>join(root,'jars',f));
+  server=spawn('java',[`-Duser.home=${home}`,'--module-path',[join(root,'.agent-build/swordfish.jar'),...jars].join(delimiter),'-m','swordfish/com.maxprograms.swordfish.TmsServer','-port',String(port)]);
+  let logs='';server.stderr.on('data',x=>logs+=x);
+  const call=request=>new Promise((resolve,reject)=>{const body=JSON.stringify(request);const req=http.request({hostname:'127.0.0.1',port,path:'/projects/business',method:'POST',headers:{'Content-Type':'application/json'}},res=>{let data='';res.setEncoding('utf8');res.on('data',x=>data+=x);res.on('end',()=>{try{resolve(JSON.parse(data));}catch(e){reject(e);}});});req.on('error',reject);req.end(body);});
+  for(let i=0;i<100;i++){try{const r=await call({op:'list'});if(r.status==='Success')break;}catch{}await new Promise(r=>setTimeout(r,50));}
+  const original=join(home,'manual.txt');writeFileSync(original,'Hello world.\n');
+  ipcMain.handle('business-request',(_e,request)=>call(request));
+  ipcMain.handle('get-style-guides',()=>listStyleGuides());
+  ipcMain.handle('intake-files',()=>[original]);
+  window=new BrowserWindow({show:false,webPreferences:{nodeIntegration:true,contextIsolation:false}});
+  const errors=[];window.webContents.on('console-message',event=>{if(event.level==='error')errors.push(event.message);});
+  await window.loadFile(join(root,'html/en/intake.html'));
+  const js=script=>window.webContents.executeJavaScript(script);
+  async function wait(predicate){for(let i=0;i<150;i++){if(await js(predicate))return;await new Promise(r=>setTimeout(r,30));}throw Error('wait failed: '+predicate+'\n'+await js('document.getElementById("message").textContent')+'\n'+logs);}
+  await wait('document.getElementById("styleGuide").options.length===11');
+  await js('document.getElementById("new").click()');
+  await js('document.getElementById("clientName").value="UI test customer";document.getElementById("saveClient").click()');
+  await wait('document.getElementById("clientId").value!==""');
+  await js('document.getElementById("name").value="UI commission";document.getElementById("srcLang").value="en";document.getElementById("tgtLang").value="zh-CN";document.getElementById("deadline").value="2026-10-23T17:00:00+08:00";document.getElementById("aiPolicy").value="allowed";document.getElementById("purpose").value="User manual";document.getElementById("sourceFiles").click()');
+  await wait('document.getElementById("fileList").textContent.includes("manual.txt")');
+  await js('document.getElementById("analyze").click()');
+  await wait('document.getElementById("analysis").textContent.includes("totals")');
+  await js('document.getElementById("basis").value="words";document.getElementById("rate").value="180.00";document.getElementById("countConfirmed").checked=true;document.getElementById("requirementsConfirmed").checked=true;document.getElementById("quote").click()');
+  await wait('document.getElementById("quotes").textContent.includes("0.36")');
+  await js('document.getElementById("create").click()');
+  await wait('document.getElementById("message").textContent.includes("项目已创建")');
+  const data=await call({op:'list'});assert.equal(data.intakes.length,1);assert.ok(data.intakes[0].projectId);assert.equal(data.intakes[0].analysis.totals.words,2);
+  assert.equal(errors.length,0,JSON.stringify(errors));
+  console.log('Intake UI: client, file selection, parse, quote, project creation and 10 styles passed');
+  window.destroy();server.kill();await new Promise(r=>server.once('exit',r));clearTimeout(timer);rmSync(home,{recursive:true,force:true});app.exit(0);
+ } catch(e){console.error(e);clearTimeout(timer);window?.destroy();server?.kill();app.exit(1);}
+});
