@@ -84,6 +84,18 @@ public class BusinessStoreTest {
             var officeStore=new com.maxprograms.swordfish.xliff.XliffStore(officeXliff.toString(),"en","zh-CN");
             try { officeStore.exportTranslations(home.resolve("delivery.docx").toString());try(var zip=new java.util.zip.ZipFile(home.resolve("delivery.docx").toFile())){check(new String(zip.getInputStream(zip.getEntry("word/document.xml")).readAllBytes(),java.nio.charset.StandardCharsets.UTF_8).contains("Word document example"),"created DOCX project exports valid original document");} }
             finally { officeStore.close(); }
+            JSONObject confirmationBefore=new JSONObject(row.toString());
+            row=call(operation("delivery",row).put("deliveryStatus","delivered").put("deliveredDate","2026-10-01").put("paymentDueDate","2026-10-31").put("timeZone","Asia/Shanghai")).getJSONObject("intake");
+            check(row.getString("deliveryStatus").equals("delivered"),"delivery update persisted");
+            check(row.getBoolean("requirementsConfirmed")==confirmationBefore.getBoolean("requirementsConfirmed"),"delivery does not invalidate translation brief");
+            check(row.getJSONObject("balance").getString("paymentStatus").equals("partial"),"delivered is not paid");
+            check(row.getJSONArray("deliveryHistory").length()==1,"delivery audit");
+            rejects(operation("delivery",row).put("deliveryStatus","in-progress"),"Clear actual delivery date");
+            JSONObject clientEdit=new JSONObject(client.toString()).put("company","Test Company").put("wechat","wx-test").put("taxId","test-tax");
+            client=call(new JSONObject().put("op","client-save").put("client",clientEdit)).getJSONObject("client");
+            check(client.getString("company").equals("Test Company"),"client extended fields");
+            JSONObject finance=call(new JSONObject().put("op","finance").put("from","2026-10-01").put("to","2026-10-31"));
+            check(finance.getJSONArray("groups").length()==1,"finance real ledger grouped");
             JSONObject calcRow=new JSONObject().put("analysis",new JSONObject().put("id","a").put("totals",new JSONObject().put("characters",12480)));
             JSONObject p=new JSONObject(pricing.toString()).put("basis","characters");
             check(BusinessStore.calculate(calcRow,p).getString("total").equals("2246.40"),"per-thousand exact");

@@ -60,16 +60,13 @@ public final class BusinessStore {
     }
     private static JSONObject view(JSONObject row) {
         JSONObject result=new JSONObject(row.toString()).put("missing",missing(row));
-        BigDecimal due=BigDecimal.ZERO,paid=BigDecimal.ZERO;
-        String currency="";
-        JSONArray quotes=row.optJSONArray("quotes");
-        if(quotes!=null)for(Object o:quotes){JSONObject q=(JSONObject)o;if("confirmed".equals(q.optString("status"))){due=new BigDecimal(q.getString("total"));currency=q.getString("currency");}}
-        for(Object o:row.optJSONArray("payments",new JSONArray()))paid=paid.add(new BigDecimal(((JSONObject)o).getString("amount")));
-        result.put("balance",new JSONObject().put("currency",currency).put("due",due.toPlainString()).put("paid",paid.toPlainString()).put("remaining",due.subtract(paid).toPlainString()));
+        result.put("balance",FinanceSummary.balance(row));
+        result.put("deliveryStatus",row.optString("deliveryStatus","unknown"));
         return result;
     }
     public static synchronized JSONObject execute(JSONObject req)throws Exception {
         JSONObject data=load();String op=req.getString("op");
+        if(op.equals("finance"))return FinanceSummary.summarize(data,req,LocalDate.now(java.time.ZoneId.of(req.optString("timeZone","Asia/Shanghai"))));
         if(op.equals("list")) {JSONArray rows=new JSONArray();for(Object r:data.getJSONArray("intakes"))rows.put(view((JSONObject)r));return new JSONObject().put("intakes",rows).put("clients",data.getJSONArray("clients"));}
         if(op.equals("client-save")) {
             JSONObject input=req.getJSONObject("client");String name=input.getString("name").trim();if(name.isEmpty())throw new IllegalArgumentException("Client name required");
@@ -78,7 +75,9 @@ public final class BusinessStore {
                 for(Object o:data.getJSONArray("clients"))if(name.equalsIgnoreCase(((JSONObject)o).getString("name")))throw new IllegalArgumentException("Client already exists; select its ID");
                 client=new JSONObject().put("id",UUID.randomUUID().toString());data.getJSONArray("clients").put(client);
             } else {client=find(data.getJSONArray("clients"),input.getString("id"));revision(client,input);}
-            for(String key:List.of("name","contact","email","phone","currency","paymentTerms","notes"))if(input.has(key))client.put(key,input.getString(key));
+            for(Object other:data.getJSONArray("clients")) {JSONObject c=(JSONObject)other;if(!c.getString("id").equals(client.getString("id"))&&name.equalsIgnoreCase(c.getString("name")))throw new IllegalArgumentException("Client already exists; choose a distinct name");}
+            input.put("name",name);
+            for(String key:List.of("name","contact","email","phone","currency","paymentTerms","notes","company","wechat","taxId"))if(input.has(key))client.put(key,input.getString(key));
             touch(client);save(data);return new JSONObject().put("client",client);
         }
         if(op.equals("save")) {
@@ -86,7 +85,7 @@ public final class BusinessStore {
             if(input.optString("id").isBlank()) {row=new JSONObject().put("id",UUID.randomUUID().toString()).put("quotes",new JSONArray()).put("payments",new JSONArray());data.getJSONArray("intakes").put(row);}
             else {row=find(data.getJSONArray("intakes"),input.getString("id"));revision(row,input);}
             JSONObject next=new JSONObject(row.toString());
-            for(String key:List.of("name","clientId","srcLang","tgtLang","deadline","orderNumber","service","notes","paymentTerms"))if(input.has(key))next.put(key,input.getString(key));
+            for(String key:List.of("name","clientId","srcLang","tgtLang","deadline","orderNumber","service","notes","paymentTerms","endClient"))if(input.has(key))next.put(key,input.getString(key));
             for(String key:List.of("files","evidence","questions","materials"))if(input.has(key))next.put(key,input.getJSONArray(key));
             if(input.has("brief")) {
                 JSONObject brief=input.getJSONObject("brief");
@@ -118,6 +117,24 @@ public final class BusinessStore {
         if(op.equals("payment"))for(Object o:row.getJSONArray("payments")) {JSONObject old=(JSONObject)o;if(old.getString("id").equals(req.getJSONObject("payment").getString("id"))) {if(!old.similar(req.getJSONObject("payment")))throw new IllegalArgumentException("Payment ID reused with different values");return new JSONObject().put("intake",view(row));}}
         revision(row,req);
         switch(op) {
+            case "delivery" -> {
+                String state=req.getString("deliveryStatus");
+                if(!Set.of("unknown","not-started","in-progress","delivered").contains(state))throw new IllegalArgumentException("Invalid delivery status");
+                String delivered=req.optString("deliveredDate",row.optString("deliveredDate"));
+                String due=req.optString("paymentDueDate",row.optString("paymentDueDate"));
+                String zone=req.optString("timeZone",row.optString("businessTimeZone","Asia/Shanghai"));
+                java.time.ZoneId timeZone=java.time.ZoneId.of(zone);
+                if(state.equals("delivered")&&delivered.isBlank())throw new IllegalArgumentException("Actual delivery date required");
+                if(!delivered.isBlank() && LocalDate.parse(delivered).isAfter(LocalDate.now(timeZone)))throw new IllegalArgumentException("Actual delivery date cannot be in the future");
+                if(!state.equals("delivered")&&!delivered.isBlank())throw new IllegalArgumentException("Clear actual delivery date when reopening an order");
+                if(!due.isBlank())LocalDate.parse(due);
+                JSONObject previous=new JSONObject().put("deliveryStatus",row.optString("deliveryStatus","unknown")).put("deliveredDate",row.optString("deliveredDate"))
+                    .put("paymentDueDate",row.optString("paymentDueDate")).put("timeZone",row.optString("businessTimeZone","Asia/Shanghai"));
+                row.put("deliveryStatus",state).put("deliveredDate",delivered).put("paymentDueDate",due).put("businessTimeZone",zone);
+                JSONArray history=row.optJSONArray("deliveryHistory",new JSONArray());
+                history.put(new JSONObject().put("at",Instant.now().toString()).put("before",previous).put("after",new JSONObject().put("deliveryStatus",state).put("deliveredDate",delivered).put("paymentDueDate",due).put("timeZone",zone)));
+                row.put("deliveryHistory",history);
+            }
             case "analyze" -> {if(!row.getJSONArray("payments").isEmpty())throw new IllegalArgumentException("Cannot change analysis after payment");if(row.has("projectId"))throw new IllegalArgumentException("Analysis frozen after project creation");row.put("analysis",analyze(row));row.put("requirementsConfirmed",false);for(Object q:row.getJSONArray("quotes"))((JSONObject)q).put("status","superseded");}
             case "quote" -> {
                 JSONObject q=calculate(row,req.getJSONObject("pricing"));

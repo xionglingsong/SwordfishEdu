@@ -3334,7 +3334,7 @@ export class Swordfish {
     static showIntake(): void {
         if (Swordfish.intakeWindow && !Swordfish.intakeWindow.isDestroyed()) { Swordfish.intakeWindow.focus(); return; }
         Swordfish.intakeWindow = new BrowserWindow({ parent: Swordfish.mainWindow, width: 1100, height: 820,
-            title: '接单建项', webPreferences: { nodeIntegration: true, contextIsolation: false } });
+            title: '商务工作台', webPreferences: { nodeIntegration: true, contextIsolation: false } });
         Swordfish.intakeWindow.setMenu(null);
         Swordfish.intakeWindow.loadURL(pathToFileURL(join(app.getAppPath(), 'html', 'en', 'intake.html')).href);
         Swordfish.intakeWindow.on('closed', () => Swordfish.mainWindow.webContents.send('request-projects'));

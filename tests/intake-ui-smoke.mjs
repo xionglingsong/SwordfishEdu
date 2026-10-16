@@ -45,8 +45,29 @@ app.whenReady().then(async()=>{
   await js('document.getElementById("create").click()');
   await wait('document.getElementById("message").textContent.includes("项目已创建")');
   const data=await call({op:'list'});assert.equal(data.intakes.length,1);assert.ok(data.intakes[0].projectId);assert.equal(data.intakes[0].analysis.totals.words,2);
+  // Confirm estimate with backend, then exercise delivery and the live receivables dashboard.
+  const order=data.intakes[0];
+  let confirmed=await call({op:'confirm-quote',id:order.id,revision:order.revision,quoteId:order.quotes[0].id});
+  assert.equal(confirmed.status,'Success');
+  await js('document.getElementById("finance").click()');
+  await wait('document.getElementById("financeGroups").textContent.includes("UI commission")');
+  await js('document.querySelector("#financeGroups button").click()');
+  await wait('!document.getElementById("details").hidden');
+  await js('document.getElementById("deliveryStatus").value="delivered";document.getElementById("deliveredDate").value="2026-01-01";document.getElementById("paymentDueDate").value="2099-12-31";document.getElementById("saveDelivery").click()');
+  await wait('document.getElementById("deliveryHistory").textContent.includes("2099-12-31")');
+  await js('document.getElementById("finance").click()');
+  await wait('document.getElementById("financeGroups").textContent.includes("未到期")');
+  assert.ok(await js('document.getElementById("financeGroups").textContent.includes("已交付")'));
+  assert.ok(await js('document.getElementById("financeTotals").textContent.includes("0.36")'));
+  await js('document.querySelector("#financeGroups button").click()');
+  await wait('!document.getElementById("details").hidden');
+  await js('document.getElementById("editClient").click()');
+  await wait('document.getElementById("clientMode").textContent.includes("正在编辑")');
+  await js('document.getElementById("clientCompany").value="Smoke Company";document.getElementById("clientWechat").value="smoke-wx";document.getElementById("saveClient").click()');
+  await wait('document.getElementById("clientMode").textContent.includes("已保存")');
+  const ledger=await call({op:'list'});assert.equal(ledger.clients[0].company,'Smoke Company');assert.equal(ledger.clients.length,1);
   assert.equal(errors.length,0,JSON.stringify(errors));
-  console.log('Intake UI: client, file selection, parse, quote, project creation and 10 styles passed');
+  console.log('Intake UI: client, file selection, parse, quote, project creation, finance dashboard, delivery, client editing and 10 styles passed');
   window.destroy();server.kill();await new Promise(r=>server.once('exit',r));clearTimeout(timer);rmSync(home,{recursive:true,force:true});app.exit(0);
  } catch(e){console.error(e);clearTimeout(timer);window?.destroy();server?.kill();app.exit(1);}
 });

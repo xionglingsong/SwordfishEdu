@@ -100,3 +100,27 @@ Brief 当前完整接入外部 Agent 与 AI Tutor。旧的批量 MT 引擎受 AI
 `npm run test:agent` 包含 24 项业务检查及 TXT/DOCX 建项后导出验证。界面烟测：`env -u ELECTRON_RUN_AS_NODE node_modules/.bin/electron tests/intake-ui-smoke.mjs`，使用临时数据目录和真实后端，不调用模型。
 
 此版本尚未包含自动发票、退款冲销、TM 匹配折扣、客户默认价模板或原生截图 OCR。单次解析同步执行，超过 CLI 超时后先 get 核对是否完成，不能直接重复建项。来源附件引用不会自动变成图片内容，须由 Agent 读取用户原始材料。
+
+## 商务工作台 A 期：应收、实收、交付
+
+Projects 的入口现在叫 **商务工作台**。默认展示应收与实收看板，可切回新建或已有委托。客户档案增加 company（单位）、wechat（微信）、taxId（税号），选择客户后“编辑当前客户”，新增客户用“新客户”。客户修改需要最新 revision，改名查重，不将两位同名客户自动合并。委托增加 endClient（终端客户），不自动替代付款客户。
+
+看板按客户 ID + 币种分组，展示合同总额、未收余额、未交付待收、已交付未收、交付状态待确认余额、逾期未收、付款日待确认余额和所选期间实收。合同等余额按当前账本全量统计，日期范围只影响“期间实收”，按支付记录 date 过滤（两端包含），不按订单创建日或交付日过滤。各币种独立，未换汇。
+
+```json
+{"op":"finance","from":"2026-10-01","to":"2026-10-31","timeZone":"Asia/Shanghai"}
+```
+
+省略日期时默认为所选时区本月1日至今天。asOf 为所选统计时区的今天；日期均按日处理，无时分秒利息计算。显示未到期、今日到期、逾期 N 天、账期待确认。逾期以 paymentDueDate 为准，不用 deadline 或 deliveredDate 顶替；旧记录不猜测日期或交付状态。此为合同余额管理口径，不等同于法定会计应收确认。
+
+### 交付状态与收款状态独立
+
+```json
+{"op":"delivery","id":"委托ID","revision":7,"deliveryStatus":"delivered","deliveredDate":"2026-10-16","paymentDueDate":"2026-11-15","timeZone":"Asia/Shanghai"}
+```
+
+交付状态：unknown / not-started / in-progress / delivered。旧记录默认 unknown，不自动认定已交付；已交付必须有真实日期且不能在业务时区的未来。回退为未开始或进行中时显式清空 deliveredDate。到期日允许早于交付日（例如合同约定先付定金），未知留空。此版本只支持一个订单到期日，分期到期日后续实现。
+
+这些变更写入 deliveryHistory，保留前后值和操作时间。不会重置翻译需求确认，也不会向翻译 brief 添加税号、微信或财务状态。timeZone 在订单中保存为 businessTimeZone；看板以用户选择的统一统计时区计算 asOf，不按每个客户分别换日。
+
+收款状态由 confirmed quote 和 payments 自动推导：unquoted（无确认报价）、unpaid、partial、paid；不得手工用交付状态替代收款事实。满额预付仍可保持进行中。当前仍不接受超过未收余额的付款；跨订单分配、超额预收、冲销退款等属于下一阶段。

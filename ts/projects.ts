@@ -35,7 +35,7 @@ export class ProjectsView {
         this.container.appendChild(this.topBar);
 
         const intakeButton = document.createElement('button');
-        intakeButton.innerText = '接单建项';
+        intakeButton.innerText = '商务工作台';
         intakeButton.title = '客户委托、文件计数、报价与翻译简报';
         intakeButton.addEventListener('click', () => ipcRenderer.send('show-intake'));
         this.topBar.appendChild(intakeButton);
