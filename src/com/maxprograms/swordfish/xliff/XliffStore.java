@@ -2901,7 +2901,7 @@ public class XliffStore {
 		}
 	}
 
-	public void exportTMX(String output, String description, String client, String subject)
+	public synchronized void exportTMX(String output, String description, String client, String subject)
 			throws SQLException, SAXException, IOException, ParserConfigurationException {
 		Element d = new Element("prop");
 		d.setAttribute("type", "project");
@@ -2920,40 +2920,48 @@ public class XliffStore {
 		}
 		try (FileOutputStream out = new FileOutputStream(output)) {
 			writeTmxHeader(out);
-			String sql = "SELECT file, unitId, segId, source, target FROM segments WHERE type='S' AND state='final' ORDER BY file, unitId, segId";
-			try (ResultSet rs = stmt.executeQuery(sql)) {
-				while (rs.next()) {
-					String file = rs.getString(1);
-					String unit = rs.getString(2);
-					String segment = rs.getString(3);
+			// XLIFF IDs are identifiers, not positions. Preserve the file order from
+			// the document and the stored traversal position within each file.
+			List<Element> files = builder.build(xliffFile).getRootElement().getChildren("file");
+			String sql = "SELECT file, unitId, segId, source, target FROM segments WHERE type='S' AND state='final' AND file=? ORDER BY child";
+			try (PreparedStatement export = conn.prepareStatement(sql)) {
+				for (Element fileElement : files) {
+					export.setString(1, fileElement.getAttributeValue("id"));
+					try (ResultSet rs = export.executeQuery()) {
+						while (rs.next()) {
+							String file = rs.getString(1);
+							String unit = rs.getString(2);
+							String segment = rs.getString(3);
 
-					StringBuilder key = new StringBuilder();
-					key.append(xliffFile.hashCode());
-					key.append('-');
-					key.append(file);
-					key.append('-');
-					key.append(unit);
-					key.append('-');
-					key.append(segment);
+							StringBuilder key = new StringBuilder();
+							key.append(xliffFile.hashCode());
+							key.append('-');
+							key.append(file);
+							key.append('-');
+							key.append(unit);
+							key.append('-');
+							key.append(segment);
 
-					String src = rs.getString(4);
-					Element source = XliffUtils.buildElement(src);
-					String tgt = rs.getString(5);
-					Element target = XliffUtils.buildElement(tgt);
+							String src = rs.getString(4);
+							Element source = XliffUtils.buildElement(src);
+							String tgt = rs.getString(5);
+							Element target = XliffUtils.buildElement(tgt);
 
-					Map<String, String> tags = getTags(source);
-					String[] context = getSurroundingSegments(file, unit, segment);
+							Map<String, String> tags = getTags(source);
+							String[] context = getSurroundingSegments(file, unit, segment);
 
-					Element tuv = XliffUtils.toTu(key.toString(), source, target, tags, srcLang, tgtLang, context);
-					tuv.getContent().add(0, d);
-					if (c != null) {
-						tuv.getContent().add(0, c);
+							Element tuv = XliffUtils.toTu(key.toString(), source, target, tags, srcLang, tgtLang, context);
+							tuv.getContent().add(0, d);
+							if (c != null) {
+								tuv.getContent().add(0, c);
+							}
+							if (s != null) {
+								tuv.getContent().add(0, s);
+							}
+							Indenter.indent(tuv, 2);
+							writeString(out, tuv.toString());
+						}
 					}
-					if (s != null) {
-						tuv.getContent().add(0, s);
-					}
-					Indenter.indent(tuv, 2);
-					writeString(out, tuv.toString());
 				}
 			}
 			writeString(out, "</body>\n");
