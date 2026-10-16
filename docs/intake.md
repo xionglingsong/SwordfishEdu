@@ -124,3 +124,55 @@ Projects 的入口现在叫 **商务工作台**。默认展示应收与实收看
 这些变更写入 deliveryHistory，保留前后值和操作时间。不会重置翻译需求确认，也不会向翻译 brief 添加税号、微信或财务状态。timeZone 在订单中保存为 businessTimeZone；看板以用户选择的统一统计时区计算 asOf，不按每个客户分别换日。
 
 收款状态由 confirmed quote 和 payments 自动推导：unquoted（无确认报价）、unpaid、partial、paid；不得手工用交付状态替代收款事实。满额预付仍可保持进行中。当前仍不接受超过未收余额的付款；跨订单分配、超额预收、冲销退款等属于下一阶段。
+
+## B 期：服务订单、报价参考和工时
+
+### 无需 CAT 文件的服务订单
+
+新建时选择 `orderKind: "service"`；原有记录默认 `cat`。服务订单要求名称、客户、服务类型和含时区的交期，不要求原文文件、语言对或翻译 AI 权限。确认前需解决 questions 并设置 requirementsConfirmed。使用 `confirm-order`，不会生成 CAT 项目；CAT 仍用 `create`。
+
+```json
+{"op":"save","intake":{"orderKind":"service","name":"两小时口译","clientId":"真实客户ID","service":"口译","deadline":"2026-10-23T17:00:00+08:00","requirementsConfirmed":true,"questions":[]}}
+```
+
+```json
+{"op":"quote","id":"委托ID","revision":1,"pricing":{"basis":"hours","quantity":"2.5","currency":"CNY","rate":"180.00","per":1,"rounding":"exact","countConfirmed":true}}
+```
+
+手工数量最多三位小数，可选 hours/pages/minutes/items，以及手工确认的 words/characters/han；fixed 为总价，不使用数量。该数量在报价中标记 manual-confirmed，不声称来源于文件分析。CAT 只允许文件统计口径及总价。服务订单确认：`{"op":"confirm-order","id":"...","revision":3}`。确认报价仍独立使用 confirm-quote。
+
+订单确认、CAT 项目创建或确认报价后，不能改变订单类型、付款客户或服务范围；新增业务应新建委托。独立服务的手工附件当前不执行 OCR 或解析计数。跨项目付款、预收分配、退款尚未加入。
+
+### 报价参考模板
+
+界面“维护报价参考模板”支持新增、编辑。模板可限定客户、服务名称和有效日期；Agent 接口还可限定 srcLang/tgtLang。选择模板后下方显示模板价；计算使用后端模板内容，如需单次议价先切回手工填写。模板只是候选，不自动代表客户接受。
+
+```json
+{"op":"rate-save","rate":{"name":"客户A口译参考价","clientId":"真实客户ID","service":"口译","validFrom":"2026-01-01","validTo":"2026-12-31","pricing":{"basis":"hours","currency":"CNY","rate":"180.00","per":1,"rounding":"exact","minimum":"0","surcharge":"0","discount":"0"}}}
+```
+
+更新模板带 id/revision；`rate-list` 列出模板。`active:false` 可停用。使用模板报价：
+
+```json
+{"op":"quote","id":"委托ID","revision":2,"rateId":"真实模板ID","pricing":{"quantity":"2.5","countConfirmed":true}}
+```
+
+后端验证客户、服务、语言和有效期，整份模板保存为 rateSnapshot。模板变化不追溯修改已有报价。现阶段不支持一份报价中多行服务，按订单分别报价。
+
+### 工时和时薪
+
+```json
+{"op":"time-add","id":"委托ID","revision":4,"entry":{"id":"本次工时UUID","date":"2026-10-16","minutes":150,"activity":"口译","note":"含准备工作"}}
+```
+
+一条工时为 1–1440 整数分钟，日期不能在业务时区的未来。同 ID 相同内容重试不重复入账。错误工时使用 `time-void`：
+
+```json
+{"op":"time-void","id":"委托ID","revision":5,"entryId":"工时UUID","reason":"重复登记"}
+```
+
+原记录保留 voidedAt/voidReason，不物理删除。work 返回有效分钟、小时数、合同额时薪和实收时薪，零工时或无确认报价时为 null。它们不扣除成本，不应称为净利润时薪；工时不自动改变合同计费数量。
+
+### A 期复查修复
+
+切换委托时重置/恢复该单自己的报价输入，避免沿用别单价格；后端明确拒绝的收款可修正金额后重试，网络结果不明仍要求保留原请求。刷新会重新读取当前委托版本；有未保存改动时提醒。禁止在已有确认报价后偷偷换付款客户，避免历史款项被归给另一客户。

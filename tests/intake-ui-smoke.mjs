@@ -66,6 +66,26 @@ app.whenReady().then(async()=>{
   await js('document.getElementById("clientCompany").value="Smoke Company";document.getElementById("clientWechat").value="smoke-wx";document.getElementById("saveClient").click()');
   await wait('document.getElementById("clientMode").textContent.includes("已保存")');
   const ledger=await call({op:'list'});assert.equal(ledger.clients[0].company,'Smoke Company');assert.equal(ledger.clients.length,1);
+  // B phase: create a file-free service order and ensure old quote form values are cleared.
+  await js('window.confirm=()=>true;document.getElementById("new").click()');
+  await wait('document.getElementById("name").value===""');
+  assert.equal(await js('document.getElementById("rate").value'),'');
+  await js(`document.getElementById('name').value='UI service';document.getElementById('orderKind').value='service';document.getElementById('clientId').selectedIndex=1;document.getElementById('service').value='教学';document.getElementById('deadline').value='2026-10-23T17:00:00+08:00';document.getElementById('requirementsConfirmed').checked=true;document.getElementById('basis').value='hours';document.getElementById('per').value='1';document.getElementById('quantity').value='2.5';document.getElementById('rate').value='180.00';document.getElementById('countConfirmed').checked=true;document.getElementById('quote').click();`);
+  await wait('document.getElementById("quotes").textContent.includes("450.00")');
+  await js('document.getElementById("confirmOrder").click()');
+  await wait('document.getElementById("list").textContent.includes("服务订单")');
+  const business=(await call({op:'list'})).intakes.find(x=>x.name==='UI service');
+  assert.ok(business.orderConfirmedAt);assert.ok(!business.projectId);
+  await call({op:'confirm-quote',id:business.id,revision:business.revision,quoteId:business.quotes[0].id});
+  await js('document.getElementById("refresh").click()');
+  await wait('document.getElementById("quotes").textContent.includes("confirmed")');
+  await js(`document.getElementById('paymentAmount').value='999.00';document.getElementById('paymentCurrency').value='CNY';document.getElementById('paymentDate').value='2026-10-16';document.getElementById('payment').click();`);
+  await wait('document.getElementById("message").textContent.includes("cannot exceed")');
+  await js(`document.getElementById('paymentAmount').value='90.00';document.getElementById('payment').click();`);
+  await wait('document.getElementById("balance").textContent.includes("90.00")');
+  await js(`document.getElementById('workDate').value='2026-10-16';document.getElementById('workMinutes').value='150';document.getElementById('workActivity').value='教学';document.getElementById('timeAdd').click();`);
+  await wait('document.getElementById("workSummary").textContent.includes("180.00")');
+  assert.ok(await js('document.getElementById("workSummary").textContent.includes("36.00")'));
   assert.equal(errors.length,0,JSON.stringify(errors));
   console.log('Intake UI: client, file selection, parse, quote, project creation, finance dashboard, delivery, client editing and 10 styles passed');
   window.destroy();server.kill();await new Promise(r=>server.once('exit',r));clearTimeout(timer);rmSync(home,{recursive:true,force:true});app.exit(0);

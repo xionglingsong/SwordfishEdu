@@ -9,9 +9,13 @@ export class IntakeWindow {
     private busy = false;
     private dirty = false;
     private deliveryDirty = false;
+    private rates: any[] = [];
+    private editingRate: any;
+    private timeId=crypto.randomUUID();
+    private timePayload: any;
     private paymentId = crypto.randomUUID();
     private paymentPayload: any;
-    private fields = ['name','clientId','srcLang','tgtLang','deadline','orderNumber','service','paymentTerms','notes','endClient'];
+    private fields = ['name','clientId','srcLang','tgtLang','deadline','orderNumber','service','paymentTerms','notes','endClient','orderKind'];
     private briefFields = ['purpose','audience','domain','tone','terminology','doNotTranslate','delivery','instructions','styleGuide','aiPolicy'];
     constructor() {
         document.getElementById('details')!.addEventListener('input', () => { this.dirty=true; });
@@ -23,7 +27,7 @@ export class IntakeWindow {
             guides.forEach(g=>select.add(new Option(g.name,g.id)));
             if(this.current?.brief)select.value=this.current.brief.styleGuide||'';
         });
-        this.bind('refresh',async()=>{await this.load();if(!document.getElementById('financePanel')!.hidden)await this.loadFinance();});
+        this.bind('refresh',async()=>{if(!this.discard())return;const id=this.current?.id;await this.load();if(!document.getElementById('financePanel')!.hidden)await this.loadFinance();else if(id){this.current=(await this.call({op:'get',id})).intake;this.files=structuredClone(this.current.files||[]);this.render();}});
         this.bind('finance',async()=>{if(!this.discard())return;this.dirty=false;this.deliveryDirty=false;document.getElementById('details')!.hidden=true;document.getElementById('financePanel')!.hidden=false;await this.loadFinance();});
         this.bind('financeRefresh',async()=>this.loadFinance());
         this.bind('new',async()=>{if(!this.discard())return;this.current={};this.files=[];this.render();});
@@ -56,8 +60,9 @@ export class IntakeWindow {
         this.bind('analyze',async()=>{await this.save();await this.mutate({op:'analyze'});});
         this.bind('quote',async()=>{
             const pricing:any={};for(const key of ['basis','currency','rate','rounding','minimum','surcharge','discount'])pricing[key]=this.value(key);
-            pricing.per=Number(this.value('per'));pricing.countConfirmed=this.checked('countConfirmed');
-            await this.save();await this.mutate({op:'quote',pricing});
+            pricing.per=Number(this.value('per'));pricing.countConfirmed=this.checked('countConfirmed');pricing.quantity=this.value('quantity');
+            const rateId=this.value('rateCard');
+            await this.save();await this.mutate({op:'quote',pricing,...(rateId?{rateId}:{})});
         });
         this.bind('confirmQuote',async()=>{
             await this.save();
@@ -68,13 +73,45 @@ export class IntakeWindow {
         this.bind('create',async()=>{await this.save();await this.mutate({op:'create'});this.message('项目已创建：'+this.current.projectId+'。回到 Projects 刷新列表即可打开。');});
         this.bind('payment',async()=>{
             const payment={id:this.paymentId,amount:this.value('paymentAmount'),currency:this.value('paymentCurrency'),date:this.value('paymentDate'),note:this.value('paymentNote')};
-            if(this.paymentPayload && JSON.stringify(this.paymentPayload)!==JSON.stringify(payment))throw Error('上次收款提交状态未确认，请先刷新核对记录；保留原金额重试可防止重复入账。');
-            this.paymentPayload=payment;
-            await this.save();
-            await this.mutate({op:'payment',payment});this.paymentId=crypto.randomUUID();this.paymentPayload=undefined;this.input('paymentAmount').value='';
+            if(this.paymentPayload && (this.paymentPayload.order!==this.current?.id || JSON.stringify(this.paymentPayload.payment)!==JSON.stringify(payment)))throw Error('上次收款状态未确认。先刷新核对，或以原内容重试。');
+            await this.save();this.paymentPayload={order:this.current.id,payment};
+            try {await this.mutate({op:'payment',payment});this.paymentId=crypto.randomUUID();this.paymentPayload=undefined;this.input('paymentAmount').value='';}
+            catch(error){for(const [id,value] of Object.entries({paymentAmount:payment.amount,paymentCurrency:payment.currency,paymentDate:payment.date,paymentNote:payment.note}))this.input(id).value=value;this.paymentId=payment.id;if(error instanceof BusinessRequestError)this.paymentPayload=undefined;throw error;}
         });
+        this.bind('confirmOrder',async()=>{await this.save();await this.mutate({op:'confirm-order'});});
+        this.bind('timeAdd',async()=>{
+            const entry={id:this.timeId,date:this.value('workDate'),minutes:Number(this.value('workMinutes')),activity:this.value('workActivity'),note:this.value('workNote')};
+            if(this.timePayload && (this.timePayload.order!==this.current?.id || JSON.stringify(this.timePayload.entry)!==JSON.stringify(entry)))throw Error('上次工时状态未确认，请以原内容重试。');
+            await this.save();this.timePayload={order:this.current.id,entry};
+            try {await this.mutate({op:'time-add',entry});this.timeId=crypto.randomUUID();this.timePayload=undefined;this.input('workMinutes').value='';}
+            catch(error){this.timeId=entry.id;for(const [id,value] of Object.entries({workDate:entry.date,workMinutes:String(entry.minutes),workActivity:entry.activity,workNote:entry.note}))this.input(id).value=value;if(error instanceof BusinessRequestError)this.timePayload=undefined;throw error;}
+        });
+        this.bind('timeVoid',async()=>{const entryId=this.value('timeEntry'),reason=this.value('timeReason');await this.save();await this.mutate({op:'time-void',entryId,reason});});
+        this.bind('rateNew',async()=>{this.editingRate=undefined;for(const key of ['rateName','rateClient','rateService','rateFrom','rateTo'])this.input(key).value='';});
+        this.bind('rateEdit',async()=>{
+            const rate=this.rates.find(r=>r.id===this.value('rateCard'));if(!rate)throw Error('请先选择报价参考');this.editingRate=rate;
+            for(const [field,id] of Object.entries({name:'rateName',clientId:'rateClient',service:'rateService',validFrom:'rateFrom',validTo:'rateTo'}))this.input(id).value=rate[field]||'';
+            this.setPricing(rate.pricing);
+        });
+        this.bind('rateSave',async()=>{
+            const pricing:any={};for(const key of ['basis','currency','rate','rounding','minimum','surcharge','discount'])pricing[key]=this.value(key);pricing.per=Number(this.value('per'));
+            const rate:any={name:this.value('rateName'),clientId:this.value('rateClient'),service:this.value('rateService'),validFrom:this.value('rateFrom'),validTo:this.value('rateTo'),pricing};
+            if(this.editingRate){rate.id=this.editingRate.id;rate.revision=this.editingRate.revision;}
+            const result=await this.call({op:'rate-save',rate});this.editingRate=result.rate;await this.loadRates();this.input('rateCard').value=result.rate.id;this.message('报价参考已保存，不会修改已有报价。');
+        });
+        this.input('rateCard').addEventListener('change',()=>{const rate=this.rates.find(r=>r.id===this.value('rateCard'));if(rate)this.setPricing(rate.pricing);});
         this.load().then(()=>this.loadFinance()).catch(e=>this.message(String(e)));
     }
+    private setPricing(p:any):void {
+        for(const key of ['basis','currency','rate','rounding','minimum','surcharge','discount','per'])this.input(key).value=String(p[key]??({basis:'characters',currency:'CNY',rate:'',rounding:'exact',minimum:'0',surcharge:'0',discount:'0',per:'1000'} as Record<string,string>)[key]);
+    }
+    private async loadRates():Promise<void>{
+        const data=await this.call({op:'rate-list'});this.rates=data.rates;
+        const selected=this.value('rateCard');const select=this.input('rateCard') as HTMLSelectElement;select.replaceChildren(new Option('手工填写，不使用模板',''));
+        this.rates.forEach(r=>select.add(new Option(`${r.name} · ${r.pricing.currency} ${r.pricing.rate}/${r.pricing.per}`,r.id)));select.value=selected;
+        const id=this.value('rateClient');const client=this.input('rateClient') as HTMLSelectElement;client.replaceChildren(new Option('不限客户',''));this.clients.forEach(c=>client.add(new Option(c.name,c.id)));client.value=id;
+    }
+
     private clientFields():Record<string,string> {return {name:'clientName',contact:'clientContact',email:'clientEmail',phone:'clientPhone',company:'clientCompany',wechat:'clientWechat',taxId:'clientTaxId',paymentTerms:'clientTerms'};}
     private paymentLabel(status:string):string {return ({unquoted:'尚未确认报价',unpaid:'未收款',partial:'部分收款',paid:'已收齐'} as Record<string,string>)[status]||status;}
     private async loadFinance():Promise<void> {
@@ -116,29 +153,39 @@ export class IntakeWindow {
         if(this.busy)return;this.busy=true;this.message('处理中…');
         try{await run();}catch(e){this.message(String(e));}finally{this.busy=false;}
     });}
-    private async call(request:any):Promise<any>{const data=await ipcRenderer.invoke('business-request',request);if(data.status!=='Success')throw Error(data.reason||'操作失败');return data;}
+    private async call(request:any):Promise<any>{const data=await ipcRenderer.invoke('business-request',request);if(data.status!=='Success')throw new BusinessRequestError(data.reason||'操作失败');return data;}
     private async load():Promise<void>{
         const data=await this.call({op:'list'});this.clients=data.clients;this.intakes=data.intakes;
         const selected=this.value('clientId');const client=this.input('clientId') as HTMLSelectElement;client.replaceChildren(new Option('待确认',''));
         this.clients.forEach(c=>client.add(new Option(c.name,c.id)));client.value=selected;
         const list=document.getElementById('list')!;list.replaceChildren();
-        this.intakes.forEach(row=>{const b=document.createElement('button');b.className='entry';b.textContent=(row.name||'未命名委托')+(row.projectId?' · 已建项':' · 草稿');b.addEventListener('click',()=>{if(this.busy||!this.discard())return;this.current=row;this.files=structuredClone(row.files||[]);this.render();});list.appendChild(b);});
+        this.intakes.forEach(row=>{const b=document.createElement('button');b.className='entry';b.textContent=(row.name||'未命名委托')+(row.projectId?' · CAT项目':row.orderConfirmedAt?' · 服务订单':' · 草稿');b.addEventListener('click',()=>{if(this.busy||!this.discard())return;this.current=row;this.files=structuredClone(row.files||[]);this.render();});list.appendChild(b);});
+        await this.loadRates();
         this.message('已加载 '+this.intakes.length+' 份委托');
     }
-    private discard():boolean { return (!this.dirty&&!this.deliveryDirty) || confirm('有未保存的委托或账期修改，仍要切换？'); }
+    private discard():boolean { if(this.paymentPayload||this.timePayload){this.message('收款提交结果尚未确认，请保留当前订单并以原内容重试。');return false;} return (!this.dirty&&!this.deliveryDirty) || confirm('有未保存的委托或账期修改，仍要切换？'); }
     private renderFiles():void {const list=document.getElementById('fileList')!;list.replaceChildren();this.files.forEach(f=>{const line=document.createElement('div');line.textContent=(f.role==='reference'?'参考：':'原文：')+f.path;list.appendChild(line);});}
     private render():void {
         this.dirty=false;this.deliveryDirty=false;
         document.getElementById('financePanel')!.hidden=true;
         this.editingClient=undefined;document.getElementById('clientMode')!.textContent='新增客户';
         document.getElementById('details')!.hidden=false;
-        for(const key of this.fields)this.input(key).value=this.current[key]||'';
+        for(const key of this.fields)this.input(key).value=this.current[key]||(key==='orderKind'?'cat':'');
         for(const key of this.briefFields)this.input(key).value=this.current.brief?.[key]||'';
         this.input('questions').value=(this.current.questions||[]).map((q:any)=>typeof q==='string'?q:JSON.stringify(q)).join('\n');
         (this.input('requirementsConfirmed') as HTMLInputElement).checked=!!this.current.requirementsConfirmed;
         (this.input('countConfirmed') as HTMLInputElement).checked=false;
         for(const key of ['deliveryStatus','deliveredDate','paymentDueDate','businessTimeZone'])this.input(key).value=this.current[key] || (key==='deliveryStatus'?'unknown':key==='businessTimeZone'?'Asia/Shanghai':'');
         document.getElementById('deliveryHistory')!.textContent=JSON.stringify(this.current.deliveryHistory||[],null,2);
+        this.editingRate=undefined;this.input('rateCard').value='';
+        const lastQuote=this.current.quotes?.at(-1);this.setPricing(lastQuote?.pricing||{});this.input('quantity').value=lastQuote?.pricing?.quantity||'';
+        this.paymentId=crypto.randomUUID();this.timeId=crypto.randomUUID();
+        for(const id of ['paymentAmount','paymentDate','paymentNote','workDate','workMinutes','workActivity','workNote','timeReason'])this.input(id).value='';
+        this.input('paymentCurrency').value=this.current.balance?.currency||'';
+        document.getElementById('workSummary')!.textContent=this.current.work?`已记录 ${this.current.work.minutes} 分钟；合同额时薪 ${this.current.work.contractHourly??'未计算'} ${this.current.work.currency}；实收时薪 ${this.current.work.receivedHourly??'未计算'} ${this.current.work.currency}`:'尚无工时';
+        const times=this.input('timeEntry') as HTMLSelectElement;times.replaceChildren(new Option('选择需作废的工时',''));
+        (this.current.timeEntries||[]).filter((e:any)=>!e.voidedAt).forEach((e:any)=>times.add(new Option(`${e.date} · ${e.minutes} 分钟 · ${e.activity||''}`,e.id)));
+        document.getElementById('timeHistory')!.textContent=JSON.stringify(this.current.timeEntries||[],null,2);
         this.renderFiles();
         document.getElementById('evidence')!.textContent=JSON.stringify({evidence:this.current.evidence||[],materials:this.current.materials||[]},null,2);
         const a=this.current.analysis;document.getElementById('analysis')!.textContent=a?JSON.stringify({totals:a.totals,files:a.files.map((f:any)=>({name:f.name,role:f.role,words:f.words,characters:f.characters,han:f.han,segments:f.segments})),warnings:a.warnings},null,2):'尚未解析文件';
@@ -158,3 +205,5 @@ export class IntakeWindow {
     }
     private async mutate(request:any):Promise<void>{if(!this.current?.id)throw Error('请先保存委托');const data=await this.call({...request,id:this.current.id,revision:this.current.revision});this.current=data.intake;await this.load();this.render();}
 }
+
+class BusinessRequestError extends Error {}
