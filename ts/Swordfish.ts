@@ -32,6 +32,7 @@ import { FullId } from "./segmentId.js";
 import { Rect, Sizes } from "./windowSizes.js";
 import { validateScoringResult } from "./scoringSchema.js";
 import { listStyleGuides, getStyleGuide } from "../style-guides/runtime.mjs";
+import { classifyMaterials } from "./materialClassifier.js";
 import { EDU_LATEST_API, EDU_RELEASES_URL, isEduReleaseUrl, selectEduUpdate } from "./eduUpdates.js";
 
 export class Swordfish {
@@ -1327,6 +1328,23 @@ export class Swordfish {
         ipcMain.on('show-intake', () => Swordfish.showIntake());
         ipcMain.handle('business-request', async (_event, request: any) => {
             return await new Promise((resolve, reject) => Swordfish.sendRequest('/projects/business', request, resolve, reject));
+        });
+        ipcMain.handle('material-engine', () => {
+            const { engine, model } = Swordfish.getScoringEngine(Swordfish.currentPreferences);
+            return { engine, model };
+        });
+        ipcMain.handle('material-classify', async (_event, args: { id: string; revision: number }) => {
+            const business = (request: unknown): Promise<any> => new Promise((resolve, reject) => Swordfish.sendRequest('/projects/business', request, resolve, reject));
+            const sample = await business({ op: 'material-sample', id: args.id, revision: args.revision });
+            if (sample.status !== Swordfish.SUCCESS) throw new Error(sample.reason);
+            const engine = Swordfish.getScoringEngine(Swordfish.currentPreferences);
+            const response = await classifyMaterials(sample, engine, net.fetch.bind(net) as typeof fetch);
+            if (!response || typeof response !== 'object' || !Array.isArray((response as { files?: unknown }).files)) throw new Error('模型返回缺少 files 分类列表');
+            // Optimistic revision and permission are checked again after the network request.
+            const result = await business({ op: 'material-save', id: args.id, revision: args.revision,
+                analysisId: sample.analysisId, files: (response as { files: unknown[] }).files,
+                origin: engine.engine + '/' + engine.model });
+            return result;
         });
         ipcMain.handle('intake-files', async () => {
             const result = await dialog.showOpenDialog(Swordfish.intakeWindow, { properties: ['openFile', 'multiSelections'] });

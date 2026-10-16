@@ -176,3 +176,35 @@ Projects 的入口现在叫 **商务工作台**。默认展示应收与实收看
 ### A 期复查修复
 
 切换委托时重置/恢复该单自己的报价输入，避免沿用别单价格；后端明确拒绝的收款可修正金额后重试，网络结果不明仍要求保留原请求。刷新会重新读取当前委托版本；有未保存改动时提醒。禁止在已有确认报价后偷偷换付款客户，避免历史款项被归给另一客户。
+
+## 自动分析领域与文本类型
+
+先保存 AI 使用限制，再完成“解析并计数”。点击“分析材料（AI）”，会显示当前启用的模型并确认发送取样正文。采用与评分相同的已启用 LLM 优先顺序（ChatGPT、Claude、Mistral、Gemini、Qwen、GLM、Doubao、DeepSeek）；设置中可通过启停引擎选择。不会额外配置或扣除另一套模型额度，调用费用遵循该引擎服务。
+
+每份 source 文件分别展示领域、文本类型、high/medium/low/unknown 判断把握、理由、逐字原文依据、待确认问题和取样覆盖。每文件最多12段分布覆盖开头到结尾，每段最多400字符，最多20份源文件。不是章节结构解析；长段截断会标记，参考文件不参与。未知分类不自动采纳。
+
+选择“采纳领域”和/或“采纳文本类型”后点击采纳。现有字段非空时询问是否替换；不会自动填客户用途、目标读者或风格。混合材料按文件拼接分类，保留差异；采纳记录可回溯，任务 requirementsConfirmed 变为 false，需核对后重新确认。
+
+### Agent 接口
+
+先获取原文样本（必须显式允许外部 AI）：
+
+```json
+{"op":"material-sample","id":"委托ID","revision":3}
+```
+
+返回 analysisId、语言对、files（fileId/name/sourceHash/excerpts）、覆盖计数。用当前 Agent 判断正文，文件名只作辅助。结果格式：
+
+```json
+{"op":"material-save","id":"委托ID","revision":3,"analysisId":"样本中的ID","origin":"当前Agent及模型名","files":[{"fileId":"样本中的fileId","domain":"能源","textType":"操作手册","confidence":"medium","rationale":"根据设备操作步骤判断，取样未覆盖全文。","evidence":[{"segment":1,"quote":"样本中的逐字原句"}],"questions":["译文面向维护人员还是普通用户？"]}]}
+```
+
+每个文件恰好一项，1–5条引用（unknown 可空）。引文必须出现在指定样本段中；模型胡编的引文、未知文件、过期分析或 revision 冲突会被拒绝。服务端只校验证据可追溯，不保证语义分类正确。
+
+```json
+{"op":"material-adopt","id":"委托ID","revision":4,"suggestionId":"返回的建议ID","fields":["domain","textType"],"replaceExisting":false}
+```
+
+replaceExisting 只有在用户明确同意替换已有字段时设置 true。textType 为新的 brief 白名单字段，AI Tutor 和外部 Agent 后续可以读取。变更原文/语言或重新分析文件时清除当前分类建议，不让旧材料的分类自动进入新 brief。
+
+aiPolicy 未知、forbidden、local-only 均不发送正文分类。此版本未配置本地模型分类通道，不要绕过限制。没有原文的服务订单不能仅凭项目名执行此分析。

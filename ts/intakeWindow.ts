@@ -16,7 +16,7 @@ export class IntakeWindow {
     private paymentId = crypto.randomUUID();
     private paymentPayload: any;
     private fields = ['name','clientId','srcLang','tgtLang','deadline','orderNumber','service','paymentTerms','notes','endClient','orderKind'];
-    private briefFields = ['purpose','audience','domain','tone','terminology','doNotTranslate','delivery','instructions','styleGuide','aiPolicy'];
+    private briefFields = ['purpose','audience','domain','textType','tone','terminology','doNotTranslate','delivery','instructions','styleGuide','aiPolicy'];
     constructor() {
         document.getElementById('details')!.addEventListener('input', () => { this.dirty=true; });
         window.addEventListener('beforeunload', event => { if((this.dirty||this.deliveryDirty) && !confirm('有未保存的委托修改，仍要关闭？')) { event.preventDefault(); event.returnValue=false; } });
@@ -57,6 +57,26 @@ export class IntakeWindow {
             const paths:string[]=await ipcRenderer.invoke('intake-files');paths.forEach(path=>{if(!this.files.some(f=>f.path===path))this.files.push({path,role,encoding:'UTF-8'});});this.dirty=true;this.renderFiles();
         });
         this.bind('clearFiles',async()=>{if(this.current?.projectId)throw Error('已建项目的文件已冻结');this.files=[];this.dirty=true;this.renderFiles();});
+        this.bind('materialAnalyze',async()=>{
+            if(this.dirty||this.deliveryDirty)throw Error('请先保存任务和 AI 使用限制，再分析材料。');
+            if(!this.current?.analysis)throw Error('请先解析并计数，建立原文快照。');
+            const engine=await ipcRenderer.invoke('material-engine');
+            if(!engine.engine)throw Error('请在机器翻译设置启用一个 LLM。');
+            if(!confirm(`将每个源文件的分布取样正文发送到 ${engine.engine} / ${engine.model} 分析领域和文本类型，继续？`))return;
+            const result=await ipcRenderer.invoke('material-classify',{id:this.current.id,revision:this.current.revision});
+            if(result.status!=='Success')throw Error(result.reason||'材料分析失败');
+            this.current=result.intake;await this.load();this.render();
+        });
+        for(const id of ['adopt_domain','adopt_textType'])this.input(id).addEventListener('input',event=>event.stopPropagation());
+        this.bind('materialAdopt',async()=>{
+            if(this.dirty||this.deliveryDirty)throw Error('请先保存现有简报再采纳建议。');
+            const fields=['domain','textType'].filter(k=>this.checked('adopt_'+k));
+            if(!fields.length)throw Error('请选择要采纳的字段');
+            const replace=fields.some(k=>!!this.current?.brief?.[k]);
+            if(replace&&!confirm('选中的 brief 字段已有内容。确定用本次分析建议替换？'))return;
+            await this.mutate({op:'material-adopt',suggestionId:this.current.materialAnalysis?.id,fields,replaceExisting:replace});
+            this.message('建议已采纳。请核对 brief 并重新确认任务要求后使用 AI。');
+        });
         this.bind('analyze',async()=>{await this.save();await this.mutate({op:'analyze'});});
         this.bind('quote',async()=>{
             const pricing:any={};for(const key of ['basis','currency','rate','rounding','minimum','surcharge','discount'])pricing[key]=this.value(key);
@@ -189,6 +209,18 @@ export class IntakeWindow {
         this.renderFiles();
         document.getElementById('evidence')!.textContent=JSON.stringify({evidence:this.current.evidence||[],materials:this.current.materials||[]},null,2);
         const a=this.current.analysis;document.getElementById('analysis')!.textContent=a?JSON.stringify({totals:a.totals,files:a.files.map((f:any)=>({name:f.name,role:f.role,words:f.words,characters:f.characters,han:f.han,segments:f.segments})),warnings:a.warnings},null,2):'尚未解析文件';
+        const materials=document.getElementById('materialResults')!;materials.replaceChildren();
+        const suggestion=this.current.materialAnalysis;
+        if(!suggestion)materials.textContent='尚无材料分析建议。';
+        else {
+            const info=document.createElement('p');info.className='hint';info.textContent=`${suggestion.origin} · ${suggestion.created} · ${suggestion.status==='adopted'?'已采纳（需核对 brief）':'AI 建议，尚未采纳'}`;materials.appendChild(info);
+            for(const f of suggestion.files){const box=document.createElement('section');const title=document.createElement('h3');title.textContent=f.name;box.appendChild(title);
+                const text=document.createElement('p');text.textContent=`领域：${f.domain}；文本类型：${f.textType}；判断把握：${({high:'较高',medium:'中等',low:'较低',unknown:'无法判断'} as Record<string,string>)[f.confidence]}。${f.rationale}`;box.appendChild(text);
+                const coverage=document.createElement('p');coverage.className='hint';coverage.textContent=`${f.coverage.fullText?'全文覆盖':'取样分析'}：${f.coverage.sampledSegments}/${f.coverage.totalSegments} 段，${f.coverage.sampledCharacters}/${f.coverage.totalCharacters} 字符。`;box.appendChild(coverage);
+                for(const evidence of f.evidence){const q=document.createElement('blockquote');q.textContent=`第 ${evidence.segment} 段：${evidence.quote}`;box.appendChild(q);}
+                if(f.questions.length){const q=document.createElement('p');q.textContent='待确认：'+f.questions.join('；');box.appendChild(q);}materials.appendChild(box);
+            }
+        }
         document.getElementById('quotes')!.textContent=(this.current.quotes||[]).map((q:any)=>`${q.status} · ${q.currency} ${q.total}\n数量 ${q.quantity}；口径 ${q.pricing.basis}；单价 ${q.pricing.rate} / ${q.pricing.per}\nID ${q.id}`).join('\n\n');
         document.getElementById('balance')!.textContent=this.current.balance?`${this.current.balance.currency} 合同金额 ${this.current.balance.due}；已收 ${this.current.balance.paid}；未收 ${this.current.balance.remaining}；${this.paymentLabel(this.current.balance.paymentStatus)}`:'尚无已确认报价';
         document.getElementById('payments')!.textContent=JSON.stringify(this.current.payments||[],null,2);

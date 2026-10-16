@@ -27,6 +27,11 @@ app.whenReady().then(async()=>{
   ipcMain.handle('business-request',(_e,request)=>call(request));
   ipcMain.handle('get-style-guides',()=>listStyleGuides());
   ipcMain.handle('intake-files',()=>[original]);
+  ipcMain.handle('material-engine',()=>({engine:'fixture',model:'offline-test'}));
+  ipcMain.handle('material-classify',async(_event,args)=>{
+    const sample=await call({op:'material-sample',...args});assert.equal(sample.status,'Success');
+    return call({op:'material-save',...args,analysisId:sample.analysisId,origin:'offline-fixture',files:sample.files.map(f=>({fileId:f.fileId,domain:'软件',textType:'操作手册',confidence:'low',rationale:'短样例，仅测试流程',evidence:[{segment:f.excerpts[0].segment,quote:f.excerpts[0].text}],questions:['目标读者？']}))});
+  });
   window=new BrowserWindow({show:false,webPreferences:{nodeIntegration:true,contextIsolation:false}});
   const errors=[];window.webContents.on('console-message',event=>{if(event.level==='error')errors.push(event.message);});
   await window.loadFile(join(root,'html/en/intake.html'));
@@ -40,6 +45,15 @@ app.whenReady().then(async()=>{
   await wait('document.getElementById("fileList").textContent.includes("manual.txt")');
   await js('document.getElementById("analyze").click()');
   await wait('document.getElementById("analysis").textContent.includes("totals")');
+  await js('window.confirm=()=>true;document.getElementById("materialAnalyze").click()');
+  await wait('document.getElementById("materialResults").textContent.includes("操作手册")');
+  assert.equal(await js('document.getElementById("domain").value'),'');
+  assert.ok(await js('document.getElementById("materialResults").textContent.includes("Hello world.")'));
+  await js('document.getElementById("materialAdopt").click()');
+  await wait('document.getElementById("textType").value==="操作手册"');
+  assert.equal(await js('document.getElementById("domain").value'),'软件');
+  assert.equal(await js('document.getElementById("requirementsConfirmed").checked'),false);
+
   await js('document.getElementById("basis").value="words";document.getElementById("rate").value="180.00";document.getElementById("countConfirmed").checked=true;document.getElementById("requirementsConfirmed").checked=true;document.getElementById("quote").click()');
   await wait('document.getElementById("quotes").textContent.includes("0.36")');
   await js('document.getElementById("create").click()');

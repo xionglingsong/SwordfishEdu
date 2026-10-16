@@ -24,7 +24,7 @@ import com.maxprograms.xml.*;
 /** Local commission ledger. Model inference stays in the Agent; money and writes stay here. */
 public final class BusinessStore {
     private BusinessStore() { }
-    private static final Set<String> BRIEF_FIELDS = Set.of("purpose", "audience", "domain", "tone", "terminology", "doNotTranslate", "delivery", "styleGuide", "aiPolicy", "instructions");
+    private static final Set<String> BRIEF_FIELDS = Set.of("purpose", "audience", "domain", "textType", "tone", "terminology", "doNotTranslate", "delivery", "styleGuide", "aiPolicy", "instructions");
     private static final List<String> REQUIRED = List.of("name", "clientId", "srcLang", "tgtLang", "deadline");
     private static Path home() throws Exception { return TmsServer.getWorkFolder().toPath().resolve("business"); }
     private static JSONObject load() throws Exception {
@@ -124,7 +124,7 @@ public final class BusinessStore {
             if(!fingerprint(row).equals(fingerprint(next))) {
                 if(!row.getJSONArray("payments").isEmpty())throw new IllegalArgumentException("Files frozen after payment");
                 if(row.has("projectId"))throw new IllegalArgumentException("Project already created; create a new intake for changed files/languages");
-                next.remove("analysis");for(Object q:next.getJSONArray("quotes"))((JSONObject)q).put("status","superseded");if(!next.optString("orderKind","cat").equals("service"))next.put("requirementsConfirmed",false);
+                next.remove("analysis");next.remove("materialAnalysis");for(Object q:next.getJSONArray("quotes"))((JSONObject)q).put("status","superseded");if(!next.optString("orderKind","cat").equals("service"))next.put("requirementsConfirmed",false);
             }
             // Any new requirements need renewed confirmation unless explicitly supplied in this save.
             if(!input.has("requirementsConfirmed") && !next.toString().equals(row.toString()))next.put("requirementsConfirmed",false);
@@ -133,12 +133,15 @@ public final class BusinessStore {
         }
         if(op.equals("brief"))return briefForProject(req.getString("project"));
         JSONObject row=find(data.getJSONArray("intakes"),req.getString("id"));
+        if(op.equals("material-sample")) { revision(row,req);return MaterialAnalysis.sample(row).put("revision",row.getInt("revision")); }
         if(op.equals("get"))return new JSONObject().put("intake",view(row));
         if(op.equals("create") && row.has("projectId")) { if(!ProjectsHandler.hasBusinessProject(row.getString("projectId")))throw new IllegalArgumentException("Linked project was removed; create a new intake"); return new JSONObject().put("projectId",row.getString("projectId")).put("intake",view(row)); }
         if(op.equals("payment"))for(Object o:row.getJSONArray("payments")) {JSONObject old=(JSONObject)o;if(old.getString("id").equals(req.getJSONObject("payment").getString("id"))) {if(!old.similar(req.getJSONObject("payment")))throw new IllegalArgumentException("Payment ID reused with different values");return new JSONObject().put("intake",view(row));}}
         if(op.equals("time-add"))for(Object o:row.optJSONArray("timeEntries",new JSONArray())) {JSONObject old=(JSONObject)o;JSONObject entry=req.getJSONObject("entry");if(old.getString("id").equals(entry.getString("id"))){JSONObject original=new JSONObject(old.toString());original.remove("voidedAt");original.remove("voidReason");if(!original.similar(entry))throw new IllegalArgumentException("Time ID reused with different values");return new JSONObject().put("intake",view(row));}}
         revision(row,req);
         switch(op) {
+            case "material-save" -> row.put("materialAnalysis",MaterialAnalysis.validate(row,req));
+            case "material-adopt" -> MaterialAnalysis.adopt(row,req);
             case "time-add" -> {
                 JSONObject entry=req.getJSONObject("entry");UUID.fromString(entry.getString("id"));LocalDate date=LocalDate.parse(entry.getString("date"));
                 if(date.isAfter(LocalDate.now(java.time.ZoneId.of(row.optString("businessTimeZone","Asia/Shanghai")))))throw new IllegalArgumentException("Work date cannot be in future");
@@ -174,7 +177,7 @@ public final class BusinessStore {
                 history.put(new JSONObject().put("at",Instant.now().toString()).put("before",previous).put("after",new JSONObject().put("deliveryStatus",state).put("deliveredDate",delivered).put("paymentDueDate",due).put("timeZone",zone)));
                 row.put("deliveryHistory",history);
             }
-            case "analyze" -> {if(!row.getJSONArray("payments").isEmpty())throw new IllegalArgumentException("Cannot change analysis after payment");if(row.has("projectId"))throw new IllegalArgumentException("Analysis frozen after project creation");row.put("analysis",analyze(row));row.put("requirementsConfirmed",false);for(Object q:row.getJSONArray("quotes"))((JSONObject)q).put("status","superseded");}
+            case "analyze" -> {if(!row.getJSONArray("payments").isEmpty())throw new IllegalArgumentException("Cannot change analysis after payment");if(row.has("projectId"))throw new IllegalArgumentException("Analysis frozen after project creation");row.put("analysis",analyze(row));row.remove("materialAnalysis");row.put("requirementsConfirmed",false);for(Object q:row.getJSONArray("quotes"))((JSONObject)q).put("status","superseded");}
             case "quote" -> {
                 JSONObject pricing=new JSONObject(req.getJSONObject("pricing").toString());
                 JSONObject rate=null;

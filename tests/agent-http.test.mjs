@@ -94,6 +94,14 @@ test('real Java server + CLI: read/apply/undo, editor conflict, authentication',
         const source=join(home,'commission.txt');await writeFile(source,'Hello world.\n');
         let intake=(await business({op:'save',intake:{name:'Integration commission',clientId:client.id,srcLang:'en',tgtLang:'zh-CN',deadline:'2026-10-23T17:00:00+08:00',files:[{path:source,role:'source'}],brief:{purpose:'Public guide',aiPolicy:'allowed'},notes:'SECRET PRICE'}})).intake;
         intake=(await business({op:'analyze',id:intake.id,revision:intake.revision})).intake;
+        const sampled=await business({op:'material-sample',id:intake.id,revision:intake.revision});
+        const file=sampled.files[0],excerpt=file.excerpts[0];
+        const classification={fileId:file.fileId,domain:'Software',textType:'Manual',confidence:'low',rationale:'Short fixture',evidence:[{segment:excerpt.segment,quote:excerpt.text}],questions:[]};
+        intake=(await business({op:'material-save',id:intake.id,revision:intake.revision,analysisId:sampled.analysisId,origin:'test-agent',files:[classification]})).intake;
+        assert.equal(intake.brief.domain,undefined);
+        intake=(await business({op:'material-adopt',id:intake.id,revision:intake.revision,suggestionId:intake.materialAnalysis.id,fields:['domain','textType']})).intake;
+        assert.equal(intake.brief.textType,'Manual');
+
         intake=(await business({op:'save',intake:{id:intake.id,revision:intake.revision,requirementsConfirmed:true}})).intake;
         const create={op:'create',id:intake.id,revision:intake.revision};
         intake=(await business(create)).intake;
