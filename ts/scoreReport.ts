@@ -693,7 +693,7 @@ export class ScoreReport {
         }
 
         // Update status
-        this.streamingStatus.innerHTML = '<span class="sr-streamingSpinner" style="display:inline-block;width:12px;height:12px;border-width:2px;vertical-align:middle;margin-right:6px;"></span><span style="color:var(--sr-accent-green);">评分结果正在生成中...</span>';
+        this.streamingStatus.innerHTML = '<span class="sr-progSpinner sr-streamingSpinner"></span><span class="sr-progStatusText">评分结果正在生成中...</span>';
 
         // Create progressive container after status
         let container = document.createElement('div');
@@ -709,7 +709,6 @@ export class ScoreReport {
         if (!existing) {
             let hero = document.createElement('div');
             hero.className = 'sr-progHero';
-            hero.style.cssText = 'display:flex;align-items:center;gap:16px;padding:12px;background:var(--sr-bg-card);border-radius:8px;margin-bottom:12px;';
             this.progressiveContainer.insertBefore(hero, this.progressiveContainer.firstChild);
         }
 
@@ -717,20 +716,18 @@ export class ScoreReport {
         hero.innerHTML = '';
 
         let scoreSpan = document.createElement('span');
-        scoreSpan.style.cssText = 'font-size:36px;font-weight:bold;';
-        scoreSpan.className = this.scoreClass(this.liveScore / 100);
+        scoreSpan.className = 'sr-progHeroScore ' + this.scoreClass(this.liveScore / 100);
         scoreSpan.innerText = String(this.liveScore);
         hero.appendChild(scoreSpan);
 
         let maxSpan = document.createElement('span');
-        maxSpan.style.cssText = 'font-size:18px;color:var(--sr-text-tertiary);';
+        maxSpan.className = 'sr-progHeroMax';
         maxSpan.innerText = '/100';
         hero.appendChild(maxSpan);
 
         if (this.liveLevel) {
             let badge = document.createElement('span');
             badge.className = 'sr-levelBadge ' + this.levelClass(this.liveLevel);
-            badge.style.marginLeft = '12px';
             badge.innerText = this.normalizeLevel(this.liveLevel);
             hero.appendChild(badge);
         }
@@ -805,19 +802,17 @@ export class ScoreReport {
 
         let card = document.createElement('div');
         card.className = 'sr-progSegment';
-        card.style.cssText = 'padding:10px 12px;background:var(--sr-bg-card);border:1px solid var(--sr-border);border-radius:6px;margin-bottom:8px;animation:sr-fadeIn 0.3s ease;';
 
         let header = document.createElement('div');
-        header.style.cssText = 'display:flex;align-items:center;gap:8px;margin-bottom:6px;';
+        header.className = 'sr-progSegHeader';
         let title = document.createElement('span');
-        title.style.cssText = 'font-weight:bold;font-size:13px;';
+        title.className = 'sr-progSegTitle';
         title.innerText = '第' + (index + 1) + '段';
         header.appendChild(title);
 
         if (seg.score !== undefined) {
             let badge = document.createElement('span');
-            badge.style.cssText = 'font-size:12px;font-weight:bold;';
-            badge.className = this.scoreClass(seg.score / 100);
+            badge.className = 'sr-progSegBadge ' + this.scoreClass(seg.score / 100);
             badge.innerText = Math.round(seg.score) + '分';
             header.appendChild(badge);
         }
@@ -826,7 +821,7 @@ export class ScoreReport {
         // Strengths
         if (seg.strengths && seg.strengths.length > 0) {
             let strDiv = document.createElement('div');
-            strDiv.style.cssText = 'font-size:12px;color:var(--sr-accent-green);margin-bottom:4px;';
+            strDiv.className = 'sr-progStrengths';
             strDiv.innerText = '✓ ' + seg.strengths.join('; ');
             card.appendChild(strDiv);
         }
@@ -834,7 +829,7 @@ export class ScoreReport {
         // Issues
         if (seg.issues && seg.issues.length > 0) {
             let issDiv = document.createElement('div');
-            issDiv.style.cssText = 'font-size:12px;color:var(--sr-accent-red);margin-bottom:4px;';
+            issDiv.className = 'sr-progIssues';
             issDiv.innerText = '⚠ ' + seg.issues.join('; ');
             card.appendChild(issDiv);
         }
@@ -842,7 +837,7 @@ export class ScoreReport {
         // Errors summary
         if (seg.errors && seg.errors.length > 0) {
             let errDiv = document.createElement('div');
-            errDiv.style.cssText = 'font-size:11px;color:var(--sr-text-tertiary);';
+            errDiv.className = 'sr-progErrors';
             let errSummary = seg.errors.map(e => e.code + '(' + e.severity + ')').join(', ');
             errDiv.innerText = '错误: ' + errSummary;
             card.appendChild(errDiv);
@@ -851,7 +846,7 @@ export class ScoreReport {
         // Analysis
         if (seg.analysis) {
             let anaDiv = document.createElement('div');
-            anaDiv.style.cssText = 'font-size:12px;color:var(--sr-text-secondary);margin-top:4px;line-height:1.6;';
+            anaDiv.className = 'sr-progAnalysis';
             anaDiv.innerText = seg.analysis.substring(0, 200) + (seg.analysis.length > 200 ? '...' : '');
             card.appendChild(anaDiv);
         }
@@ -863,7 +858,7 @@ export class ScoreReport {
         if (!this.isStreaming) return;
 
         if (this.streamingStatus) {
-            this.streamingStatus.innerHTML = '<span style="color:var(--sr-accent-green);">✓ 评分完成，正在解析...</span>';
+            this.streamingStatus.innerHTML = '<span class="sr-progStatusDone">✓ 评分完成，正在解析...</span>';
         }
 
         let structured = validateScoringResult(fullContent);
@@ -878,7 +873,6 @@ export class ScoreReport {
                 if (thinkingContent) {
                     let thinkDiv = document.createElement('div');
                     thinkDiv.className = 'sr-thinkingSection';
-                    thinkDiv.style.marginBottom = '12px';
                     let header = document.createElement('div');
                     header.className = 'sr-thinkingHeader';
                     let arrow = document.createElement('span');
@@ -953,7 +947,7 @@ export class ScoreReport {
 
         if (partialContent) {
             let pre = document.createElement('pre');
-            pre.style.cssText = 'padding:10px;font-size:12px;white-space:pre-wrap;background:var(--sr-bg-neutral);border-radius:4px;margin-top:8px;';
+            pre.className = 'sr-progAnalysis';
             pre.innerText = partialContent;
             this.container.appendChild(pre);
         }
@@ -1141,7 +1135,7 @@ export class ScoreReport {
         let compareBtn = document.createElement('button');
         compareBtn.className = 'sr-repracticeSubmit';
         compareBtn.innerText = '对比';
-        compareBtn.style.marginLeft = '8px';
+        compareBtn.className = 'sr-compareToggle';
         selectors.appendChild(compareBtn);
         section.appendChild(selectors);
 
@@ -1274,7 +1268,7 @@ export class ScoreReport {
                 let scoreDelta = (segB.score || 0) - (segA.score || 0);
 
                 let segRowLabel = document.createElement('div');
-                segRowLabel.style.cssText = 'grid-column:1/-1;font-weight:bold;color:#333;margin-top:4px;font-size:12px;';
+                segRowLabel.style.cssText = 'grid-column:1/-1;font-weight:bold;color:var(--sr-text-primary);margin-top:4px;font-size:12px;';
                 segRowLabel.innerText = '第' + (si + 1) + '段';
                 grid.appendChild(segRowLabel);
 

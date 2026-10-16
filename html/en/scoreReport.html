@@ -123,7 +123,7 @@
         .sr-zoomBtn:hover { background: var(--sr-bg-hover); }
         .sr-zoomLabel { font-size: 12px; color: var(--sr-text-tertiary); min-width: 36px; text-align: center; }
         .sr-segmentNav { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 16px; padding: 8px; background: var(--sr-bg-card); border-radius: 4px; border: 1px solid var(--sr-border-light); }
-        .sr-segmentNavLink { text-decoration: none; padding: 2px 8px; border-radius: 4px; font-size: 12px; background: white; border: 1px solid var(--sr-border); }
+        .sr-segmentNavLink { text-decoration: none; padding: 2px 8px; border-radius: 4px; font-size: 12px; background: var(--sr-bg-card); border: 1px solid var(--sr-border); }
         .sr-segmentNavLink:hover { background: var(--sr-bg-hover); }
         .sr-segmentNavIdx { color: var(--sr-text-primary); }
         .sr-segmentNavScore { font-weight: bold; }
@@ -344,7 +344,7 @@
         .sr-trendLegend { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 8px; font-size: 11px; color: var(--sr-text-tertiary); }
         .sr-trendLegendItem { display: flex; align-items: center; gap: 4px; }
         .sr-trendLegendLine { width: 16px; height: 3px; border-radius: 2px; }
-        .sr-trendTooltip { position: absolute; background: white; border: 1px solid var(--sr-border-input); border-radius: 4px; padding: 4px 8px; font-size: 11px; pointer-events: none; box-shadow: 0 2px 4px rgba(0,0,0,0.1); z-index: 10; }
+        .sr-trendTooltip { position: absolute; background: var(--sr-bg-card); border: 1px solid var(--sr-border-input); border-radius: 4px; padding: 4px 8px; font-size: 11px; pointer-events: none; box-shadow: 0 2px 4px var(--sr-shadow-sm); z-index: 10; }
 
         /* === Error pattern dashboard === */
         .sr-errorDashboard { margin-bottom: 16px; padding: 12px; background: var(--sr-bg-card); border-radius: 6px; border: 1px solid var(--sr-border-light); }
@@ -365,7 +365,7 @@
         .sr-errorBarAction { font-size: 11px; color: var(--sr-text-secondary); margin-top: 2px; padding-left: 94px; margin-bottom: 6px; }
 
         /* === Re-practice === */
-        .sr-repracticeBtn { display: inline-block; margin-top: 8px; padding: 4px 12px; font-size: 12px; color: var(--sr-link); cursor: pointer; border: 1px solid var(--sr-link); border-radius: 4px; background: white; }
+        .sr-repracticeBtn { display: inline-block; margin-top: 8px; padding: 4px 12px; font-size: 12px; color: var(--sr-link); cursor: pointer; border: 1px solid var(--sr-link); border-radius: 4px; background: var(--sr-bg-card); }
         .sr-repracticeBtn:hover { background: var(--sr-bg-info); }
         .sr-repracticeForm { margin-top: 8px; padding: 10px; background: var(--sr-bg-form); border-radius: 6px; border: 1px solid var(--sr-border-form); }
         .sr-repracticeInput { width: 100%; min-height: 60px; padding: 8px; border: 1px solid var(--sr-border-input); border-radius: 4px; font-size: 12px; resize: vertical; font-family: inherit; margin-top: 6px; }
@@ -416,6 +416,23 @@
             .sr-trendChart, .sr-errorDashboard { break-inside: avoid; }
         }
 
+        /* === Progressive rendering === */
+        .sr-progHero { display: flex; align-items: center; gap: 16px; padding: 12px; background: var(--sr-bg-card); border-radius: 8px; margin-bottom: 12px; }
+        .sr-progHeroScore { font-size: 36px; font-weight: bold; }
+        .sr-progHeroMax { font-size: 18px; color: var(--sr-text-muted); }
+        .sr-progSegment { padding: 10px 12px; background: var(--sr-bg-card); border: 1px solid var(--sr-border); border-radius: 6px; margin-bottom: 8px; animation: sr-fadeIn 0.3s ease; }
+        .sr-progSegHeader { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+        .sr-progSegTitle { font-weight: bold; font-size: 13px; }
+        .sr-progSegBadge { font-size: 12px; font-weight: bold; }
+        .sr-progStrengths { font-size: 12px; color: var(--sr-accent-green); margin-bottom: 4px; }
+        .sr-progIssues { font-size: 12px; color: var(--sr-accent-red); margin-bottom: 4px; }
+        .sr-progErrors { font-size: 11px; color: var(--sr-text-tertiary); }
+        .sr-progAnalysis { font-size: 12px; color: var(--sr-text-secondary); margin-top: 4px; line-height: 1.6; }
+        .sr-progStatus { display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: bold; color: var(--sr-text-primary); }
+        .sr-progStatusDone { color: var(--sr-accent-green); }
+        .sr-progSpinner { display: inline-block; width: 12px; height: 12px; border-width: 2px; vertical-align: middle; margin-right: 6px; }
+        .sr-progStatusText { color: var(--sr-accent-green); }
+
         /* === Streaming mode === */
         .sr-streamingContainer { display: flex; flex-direction: column; gap: 12px; padding: 16px; min-height: 300px; }
         .sr-streamingStatus { display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: bold; color: var(--sr-text-primary); }
@@ -461,8 +478,26 @@
             --sr-bg-error: #2a1a1a;
             --sr-bg-purple: #251a2a;
             --sr-bg-form: #2a2818;
+            --sr-bg-red-light: #3a1a1a;
+            --sr-bg-green-light: #1a2a1e;
+            --sr-bg-orange-light: #2a2518;
+            --sr-bg-ref-official: #1a2535;
+            --sr-bg-disabled: #444;
             --sr-border: #333;
             --sr-border-light: #2a2a2a;
+            --sr-border-input: #444;
+            --sr-border-focus: #4a9eff;
+            --sr-border-student: #8a5a3a;
+            --sr-border-warning: #8a7030;
+            --sr-border-success: #4a6a4a;
+            --sr-border-form: #6a5a2a;
+            --sr-scope-core-bg: #4a1a1a;
+            --sr-scope-cohesion-bg: #3a2a1a;
+            --sr-scope-local-bg: #2a2a2a;
+            --sr-scope-local: #aaa;
+            --sr-severity2-border: #8a6020;
+            --sr-severity1-border: #555;
+            --sr-shadow-sm: rgba(0,0,0,0.3);
         }
     </style>
 </head>
