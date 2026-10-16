@@ -16,7 +16,8 @@
         "build:agent": "node scripts/build-agent.mjs",
         "start:agent": "node scripts/build-agent.mjs --start",
         "test:agent": "npm run build:agent && node scripts/test-agent.mjs",
-        "test:styles": "node --test tests/style-guides.test.mjs"
+        "test:styles": "node --test tests/style-guides.test.mjs",
+        "test:updates": "npm run build && node --test tests/edu-updates.test.mjs"
     },
     "author": {
         "name": "Lingsong Xiong",

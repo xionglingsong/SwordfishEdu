@@ -32,6 +32,7 @@ import { FullId } from "./segmentId.js";
 import { Rect, Sizes } from "./windowSizes.js";
 import { validateScoringResult } from "./scoringSchema.js";
 import { listStyleGuides, getStyleGuide } from "../style-guides/runtime.mjs";
+import { EDU_LATEST_API, EDU_RELEASES_URL, isEduReleaseUrl, selectEduUpdate } from "./eduUpdates.js";
 
 export class Swordfish {
 
@@ -94,6 +95,7 @@ export class Swordfish {
 
     static latestVersion: string;
     static downloadLink: string;
+    static checkingUpdates = false;
 
     static currentDefaults: Rectangle;
     static currentPreferences: Preferences = {
@@ -3428,7 +3430,7 @@ export class Swordfish {
     }
 
     static showReleaseHistory(): void {
-        shell.openExternal('https://www.maxprograms.com/products/swfishlog.html').catch((reason: any) => {
+        shell.openExternal(EDU_RELEASES_URL).catch((reason: any) => {
             if (reason instanceof Error) {
                 console.error(reason.message);
             }
@@ -3485,91 +3487,49 @@ export class Swordfish {
         });
     }
 
-    static checkUpdates(silent: boolean): void {
-        session.defaultSession.clearCache().then(() => {
-            let request: ClientRequest = net.request({
-                url: 'https://maxprograms.com/swordfish.json',
-                session: session.defaultSession
+    static async checkUpdates(silent: boolean): Promise<void> {
+        if (Swordfish.checkingUpdates) return;
+        if (Swordfish.updatesWindow && !Swordfish.updatesWindow.isDestroyed()) {
+            if (!silent) Swordfish.updatesWindow.focus();
+            return;
+        }
+        Swordfish.checkingUpdates = true;
+        Swordfish.downloadLink = '';
+        try {
+            const response = await net.fetch(EDU_LATEST_API, {
+                headers: { Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28' },
+                cache: 'no-store', signal: AbortSignal.timeout(15000)
             });
-            request.on('response', (response: IncomingMessage) => {
-                let responseData: string = '';
-                if (response.statusCode !== 200) {
-                    if (!silent) {
-                        Swordfish.showMessage({
-                            type: 'info',
-                            message: 'Server status: ' + response.statusCode
-                        });
-                    }
-                }
-                response.on('data', (chunk: Buffer) => {
-                    responseData += chunk;
-                });
-                response.on('end', () => {
-                    try {
-                        let parsedData: any = JSON.parse(responseData);
-                        if (app.getVersion() !== parsedData.version) {
-                            Swordfish.latestVersion = parsedData.version;
-                            switch (process.platform) {
-                                case 'darwin':
-                                    Swordfish.downloadLink = process.arch === 'arm64' ? parsedData.arm64 : parsedData.darwin;
-                                    break;
-                                case 'win32':
-                                    Swordfish.downloadLink = parsedData.win32;
-                                    break;
-                                case 'linux':
-                                    Swordfish.downloadLink = parsedData.linux;
-                                    break;
-                            }
-                            Swordfish.updatesWindow = new BrowserWindow({
-                                parent: this.mainWindow,
-                                width: 560,
-                                height: 240,
-                                minimizable: false,
-                                maximizable: false,
-                                resizable: false,
-                                show: false,
-                                icon: this.iconPath,
-                                webPreferences: {
-                                    nodeIntegration: true,
-                                    contextIsolation: false
-                                }
-                            });
-                            Swordfish.updatesWindow.setMenu(null);
-                            let filePath: string = join(app.getAppPath(), 'html', Swordfish.currentPreferences.appLang, 'updates.html');
-                            let fileUrl: URL = new URL('file://' + filePath);
-                            Swordfish.updatesWindow.loadURL(fileUrl.href);
-                            Swordfish.updatesWindow.once('ready-to-show', () => {
-                                Swordfish.updatesWindow.show();
-                            });
-                            this.updatesWindow.on('close', () => {
-                                this.mainWindow.focus();
-                            });
-                        } else if (!silent) {
-                            Swordfish.showMessage({
-                                type: 'info',
-                                message: 'There are currently no updates available'
-                            });
-                        }
-                    } catch (reason: any) {
-                        if (!silent) {
-                            Swordfish.showMessage({
-                                type: 'error',
-                                message: reason.message
-                            });
-                        }
-                    }
-                });
+            if (response.status === 404) {
+                if (!silent) Swordfish.showMessage({ type: 'info', message: 'No published SwordfishEdu release is available yet.' });
+                return;
+            }
+            if (!response.ok) throw new Error('Unable to check SwordfishEdu releases (GitHub HTTP ' + response.status + ').');
+            const update = selectEduUpdate(app.getVersion(), await response.json());
+            if (!update) {
+                if (!silent) Swordfish.showMessage({ type: 'info', message: 'SwordfishEdu is up to date. No newer stable release is available.' });
+                return;
+            }
+            Swordfish.latestVersion = update.version;
+            Swordfish.downloadLink = update.url;
+            Swordfish.updatesWindow = new BrowserWindow({
+                parent: this.mainWindow, width: 600, height: 280,
+                minimizable: false, maximizable: false, resizable: false, show: false,
+                icon: this.iconPath,
+                webPreferences: { nodeIntegration: true, contextIsolation: false }
             });
-            request.on('error', (error: Error) => {
-                if (!silent) {
-                    Swordfish.showMessage({
-                        type: 'error',
-                        message: error.message
-                    });
-                }
+            Swordfish.updatesWindow.setMenu(null);
+            const filePath = join(app.getAppPath(), 'html', Swordfish.currentPreferences.appLang, 'updates.html');
+            await Swordfish.updatesWindow.loadURL(pathToFileURL(filePath).href);
+            if (!Swordfish.updatesWindow.isDestroyed()) Swordfish.updatesWindow.show();
+            Swordfish.updatesWindow.on('close', () => {
+                if (!Swordfish.mainWindow.isDestroyed()) Swordfish.mainWindow.focus();
             });
-            request.end();
-        });
+        } catch (reason: unknown) {
+            if (!silent) Swordfish.showMessage({ type: 'error', message: reason instanceof Error ? reason.message : String(reason) });
+        } finally {
+            Swordfish.checkingUpdates = false;
+        }
     }
 
     getTypes(event: IpcMainEvent): void {
@@ -9503,58 +9463,17 @@ export class Swordfish {
     }
 
     static downloadLatest(): void {
-        let downloadsFolder: string = app.getPath('downloads');
-        let url: URL = new URL(Swordfish.downloadLink);
-        let path: string = url.pathname;
-        path = path.substring(path.lastIndexOf('/') + 1);
-        let file: string = downloadsFolder + (process.platform === 'win32' ? '\\' : '/') + path;
-        if (existsSync(file)) {
-            unlinkSync(file);
+        if (!isEduReleaseUrl(Swordfish.downloadLink)) {
+            Swordfish.showMessage({ type: 'error', message: 'No verified SwordfishEdu release is selected. Check for updates again.' });
+            return;
         }
-        let request: ClientRequest = net.request({
-            url: Swordfish.downloadLink,
-            session: session.defaultSession
+        // Let users choose a platform/architecture asset on the fork's release page.
+        // Never download or launch an upstream installer, or quit an editing session.
+        shell.openExternal(Swordfish.downloadLink).then(() => {
+            if (Swordfish.updatesWindow && !Swordfish.updatesWindow.isDestroyed()) Swordfish.updatesWindow.close();
+        }).catch((reason: unknown) => {
+            Swordfish.showMessage({ type: 'error', message: 'Unable to open SwordfishEdu release: ' + String(reason) });
         });
-        Swordfish.mainWindow.webContents.send('set-status', 'Downloading...');
-        Swordfish.updatesWindow.close();
-        request.on('response', (response: IncomingMessage) => {
-            let fileSize: number = Number.parseInt(response.headers['content-length'] as string);
-            let received: number = 0;
-            response.on('data', (chunk: Buffer) => {
-                received += chunk.length;
-                if (process.platform === 'win32' || process.platform === 'darwin') {
-                    Swordfish.mainWindow.setProgressBar(received / fileSize);
-                }
-                Swordfish.mainWindow.webContents.send('set-status', 'Downloaded: ' + Math.trunc(received * 100 / fileSize) + '%');
-                appendFileSync(file, chunk);
-            });
-            response.on('end', () => {
-                Swordfish.mainWindow.webContents.send('set-status', '');
-                dialog.showMessageBox({
-                    type: 'info',
-                    message: 'Update downloaded'
-                });
-                if (process.platform === 'win32' || process.platform === 'darwin') {
-                    Swordfish.mainWindow.setProgressBar(0);
-                    shell.openPath(file).then(() => {
-                        app.quit();
-                    }).catch((reason: string) => {
-                        dialog.showErrorBox('Error', reason);
-                    });
-                }
-                if (process.platform === 'linux') {
-                    shell.showItemInFolder(file);
-                }
-            });
-            response.on('error', (error: Error) => {
-                Swordfish.mainWindow.webContents.send('set-status', '');
-                dialog.showErrorBox('Error', error.message);
-                if (process.platform === 'win32' || process.platform === 'darwin') {
-                    Swordfish.mainWindow.setProgressBar(0);
-                }
-            });
-        });
-        request.end();
     }
 
     static showGettingStarted(): void {
