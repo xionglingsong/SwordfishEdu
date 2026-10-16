@@ -4,7 +4,7 @@
 
 ## 启动
 
-需要 Node.js、PATH 中可用的 JDK 21+，以及本项目已有的 npm 依赖和内置 Java 运行时。
+需要 Node.js、PATH 中可用的 JDK 25+，以及本项目已有的 npm 依赖和内置 Java 运行时。
 
 ```bash
 cd /Users/lingsongxiong/mydev/SwordfishEdu-master

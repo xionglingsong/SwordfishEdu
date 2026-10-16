@@ -56,7 +56,7 @@ import com.maxprograms.swordfish.models.SourceFile;
 import com.maxprograms.swordfish.xliff.Skeletons;
 import com.maxprograms.swordfish.xliff.XliffStore;
 import com.maxprograms.swordfish.xliff.XliffUtils;
-import com.maxprograms.xliff2.ToXliff2;
+import com.maxprograms.xliff2.Resegmenter;
 import com.maxprograms.xml.CatalogBuilder;
 import com.maxprograms.xml.Document;
 import com.maxprograms.xml.Element;
@@ -65,7 +65,6 @@ import com.maxprograms.xml.SAXBuilder;
 import com.maxprograms.xml.XMLOutputter;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
-import com.maxprograms.xliff2.Resegmenter;
 
 public class ProjectsHandler implements HttpHandler {
 
@@ -75,6 +74,7 @@ public class ProjectsHandler implements HttpHandler {
 	private String srxFile;
 	private String catalogFile;
 	private boolean paragraphSegmentation;
+	private int maxThreads = Runtime.getRuntime().availableProcessors();
 
 	private static Map<String, XliffStore> projectStores = new Hashtable<>();
 
@@ -251,8 +251,10 @@ public class ProjectsHandler implements HttpHandler {
 				response = getFiles(request);
 			} else if ("/projects/getFileStart".equals(url)) {
 				response = getFileStart(request);
-			} else if ("/projects/getSameSource".equals(url)) {
-				response = getSameSource(request);
+			} else if ("/projects/previousSameSource".equals(url)) {
+				response = previousSameSource(request);
+			} else if ("/projects/nextSameSource".equals(url)) {
+				response = nextSameSource(request);
 			} else if ("/projects/addNote".equals(url)) {
 				response = addNote(request);
 			} else if ("/projects/removeNote".equals(url)) {
@@ -341,15 +343,22 @@ public class ProjectsHandler implements HttpHandler {
 	}
 
 	private JSONObject setMTMatches(String request)
-			throws JSONException, SQLException, IOException, SAXException, ParserConfigurationException {
+			throws JSONException, SQLException, IOException, SAXException, ParserConfigurationException,
+			URISyntaxException {
 		JSONObject result = new JSONObject();
 		JSONObject json = new JSONObject(request);
 		String project = json.getString("project");
-		Map<String, Project> projects = getProjects();
-		if (!projects.containsKey(project)) {
-			MessageFormat mf = new MessageFormat(Messages.getString("ProjectsHandler.2"));
-			result.put(Constants.REASON, mf.format(new String[] { project }));
-			return result;
+		if (!projectStores.containsKey(project)) {
+			Map<String, Project> projects = getProjects();
+			if (!projects.containsKey(project)) {
+				MessageFormat mf = new MessageFormat(Messages.getString("ProjectsHandler.2"));
+				result.put(Constants.REASON, mf.format(new String[] { project }));
+				return result;
+			}
+			Project prj = projects.get(project);
+			XliffStore store = new XliffStore(prj.getXliff(), prj.getSourceLang().getCode(),
+					prj.getTargetLang().getCode());
+			projectStores.put(project, store);
 		}
 		projectStores.get(project).setMTMatches(json);
 		return result;
@@ -742,8 +751,8 @@ public class ProjectsHandler implements HttpHandler {
 				String project = array.getString(i);
 				if (projectStores.containsKey(project)) {
 					XliffStore store = projectStores.get(project);
-					store.close();
 					projectStores.remove(project);
+					store.close();
 				}
 				TmsServer.deleteFolder(new File(getWorkFolder(), project));
 				projects.remove(project);
@@ -975,7 +984,8 @@ public class ProjectsHandler implements HttpHandler {
 								file.getString("encoding"));
 						sourceFiles.add(sf);
 						if (FileFormats.getFullName(file.getString("type")).equals(FileFormats.XLIFF)
-								&& XliffUtils.isSwordfishReview(file.getString("file"))) {
+								&& (XliffUtils.isSwordfishReview(file.getString("file"))
+										|| XliffUtils.isCurrentOpenXliff(file.getString("file")))) {
 							if (files.length() != 1) {
 								try {
 									TmsServer.deleteFolder(projectFolder);
@@ -1019,14 +1029,15 @@ public class ProjectsHandler implements HttpHandler {
 							params.put("srcLang", json.getString("srcLang"));
 							params.put("tgtLang", json.getString("tgtLang"));
 							params.put("xmlfilter", json.getString("xmlfilter"));
+							params.put("maxThreads", String.valueOf(maxThreads));
+							params.put("xliff21", "yes");
 
 							List<String> res = Convert.run(params);
 
 							if ("0".equals(res.get(0))) {
-								res = ToXliff2.run(xliff, catalogFile, "2.1");
 								if (!paragraph) {
 									res = Resegmenter.run(xliff.getAbsolutePath(), srxFile, json.getString("srcLang"),
-											CatalogBuilder.getCatalog(catalogFile));
+											CatalogBuilder.getCatalog(catalogFile), maxThreads);
 								}
 							}
 							if ("0".equals(res.get(0))) {
@@ -1139,6 +1150,9 @@ public class ProjectsHandler implements HttpHandler {
 		srxFile = json.getString("srx");
 		catalogFile = json.getString("catalog");
 		paragraphSegmentation = json.getBoolean("paragraphSegmentation");
+		if (json.has("maxThreads")) {
+			maxThreads = json.getInt("maxThreads");
+		}
 	}
 
 	public static File getWorkFolder() throws IOException {
@@ -1160,8 +1174,8 @@ public class ProjectsHandler implements HttpHandler {
 		if (projectStores.containsKey(project)) {
 			try {
 				XliffStore prj = projectStores.get(project);
-				projectStores.remove(project);
 				prj.close();
+				projectStores.remove(project);
 			} catch (Exception e) {
 				logger.log(Level.ERROR, e);
 				result.put(Constants.REASON, e.getMessage());
@@ -1429,7 +1443,7 @@ public class ProjectsHandler implements HttpHandler {
 			String project = json.getString("project");
 			String glossary = json.getString("glossary");
 			Map<String, Project> projects = getProjects();
-			projects.get(project).setMemory(glossary);
+			projects.get(project).setGlossary(glossary);
 			saveProjectsList(projects);
 		} catch (IOException e) {
 			logger.log(Level.ERROR, e);
@@ -2008,7 +2022,8 @@ public class ProjectsHandler implements HttpHandler {
 		try {
 			String project = json.getString("project");
 			if (projectStores.containsKey(project)) {
-				JSONObject context = projectStores.get(project).getContext(json.getString("file"), json.getString("unit"));
+				JSONObject context = projectStores.get(project).getContext(json.getString("file"),
+						json.getString("unit"));
 				if (context != null) {
 					result.put("context", context);
 				}
@@ -2027,6 +2042,8 @@ public class ProjectsHandler implements HttpHandler {
 			String project = json.getString("project");
 			if (projectStores.containsKey(project)) {
 				result.put("files", projectStores.get(project).getFiles());
+			} else {
+				result.put(Constants.REASON, "Project not in store");
 			}
 		} catch (SQLException | JSONException e) {
 			logger.log(Level.ERROR, e);
@@ -2050,14 +2067,31 @@ public class ProjectsHandler implements HttpHandler {
 		return result;
 	}
 
-	private JSONObject getSameSource(String request) {
+	private JSONObject previousSameSource(String request) {
+		JSONObject result = new JSONObject();
+		JSONObject json = new JSONObject(request);
+		try {
+			String project = json.getString("project");
+			if (projectStores.containsKey(project)) {
+				result.put("previous",
+						projectStores.get(project).previousSameSource(json.getString("file"), json.getString("unit"),
+								json.getString("segment")));
+			}
+		} catch (SQLException | JSONException e) {
+			logger.log(Level.ERROR, e);
+			result.put(Constants.REASON, e.getMessage());
+		}
+		return result;
+	}
+
+	private JSONObject nextSameSource(String request) {
 		JSONObject result = new JSONObject();
 		JSONObject json = new JSONObject(request);
 		try {
 			String project = json.getString("project");
 			if (projectStores.containsKey(project)) {
 				result.put("next",
-						projectStores.get(project).getSameSource(json.getString("file"), json.getString("unit"),
+						projectStores.get(project).nextSameSource(json.getString("file"), json.getString("unit"),
 								json.getString("segment")));
 			}
 		} catch (SQLException | JSONException e) {

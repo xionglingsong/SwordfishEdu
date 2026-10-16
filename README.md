@@ -305,9 +305,9 @@ AI 助手可选择阮一峰、yikeke、微软通用英文、微软英式英语�
 
 ### 环境要求
 
-- JDK 21+ (<https://adoptium.net/>)
-- Gradle 9.2.1+ (<https://gradle.org>)
-- Node.js 24.11.1 LTS+ (<https://nodejs.org/>)
+- JDK 25 LTS (<https://adoptium.net/>)
+- Gradle 9.7.1+ (<https://gradle.org>)
+- Node.js 24.21.0 LTS+ (<https://nodejs.org/>)
 
 ### 构建步骤
 
@@ -390,5 +390,5 @@ Eclipse Public License 1.0 (EPL-1.0) — 开源协议，可免费使用、修改
 ## 相关项目
 
 - [Swordfish](https://github.com/maxprograms-com/Swordfish) — 上游 CAT 工具
-- [RemoteTM](https://github.com/rmraya/RemoteTM) — 远程翻译记忆服务器
-- [OpenXLIFF](https://github.com/rmraya/OpenXLIFF) — XLIFF 过滤器
+- [RemoteTM](https://github.com/maxprograms-com/RemoteTM) — 远程翻译记忆服务器
+- [OpenXLIFF](https://github.com/maxprograms-com/OpenXLIFF) — XLIFF 过滤器

@@ -27,7 +27,7 @@ test('real Java server + CLI: read/apply/undo, editor conflict, authentication',
         fuzzyTermSearches:false, paragraphSegmentation:true, srx:join(root,'srx/default.srx') }));
     await writeFile(join(projects,'projects.json'), JSON.stringify({ projects:[{ id:'p',description:'Agent Test',status:0,
         sourceLang:'en',targetLang:'zh-CN',creationDate:'2026-10-16',files:[],xliff:'p/p.xlf',memory:'none',glossary:'none' }] }));
-    await writeFile(join(projects,'p/p.xlf'), '<xliff xmlns="urn:oasis:names:tc:xliff:document:2.0" version="2.0" srcLang="en" trgLang="zh-CN"><file id="f"><unit id="u"><segment id="s" state="translated"><source>Hello</source><target>你好</target></segment></unit></file></xliff>');
+    await writeFile(join(projects,'p/p.xlf'), '<xliff xmlns="urn:oasis:names:tc:xliff:document:2.0" version="2.0" srcLang="en" trgLang="zh-CN"><file id="f"><unit id="u"><segment id="s" state="translated"><source>Hello</source><target>你好</target></segment></unit><unit id="confirmed"><segment id="confirmed" state="final"><source>Confirmed</source><target>已确认</target></segment></unit></file></xliff>');
     const socket = net.createServer(); await new Promise(r => socket.listen(0,'127.0.0.1',r));
     const port = socket.address().port; await new Promise(r => socket.close(r));
     const jars = (await readdir(join(root,'jars'))).filter(f=>f.endsWith('.jar') && f!=='swordfish.jar').map(f=>join(root,'jars',f));
@@ -52,10 +52,29 @@ test('real Java server + CLI: read/apply/undo, editor conflict, authentication',
         result=await cli(['validate',patch],env); assert.equal(result.code,0,result.err); assert.equal(JSON.parse(result.out).applied,false);
         result=await cli(['apply',patch],env); assert.equal(result.code,0,result.err); const batch=JSON.parse(result.out).batchId;
         assert.match(JSON.parse(result.out).instruction, /Style: yikeke@1.0.0/);
-        result=await cli(['read','p'],env); assert.equal(JSON.parse(result.out).segments[0].target,'<target>您好</target>');
+        const savedProject = JSON.parse(await readFile(join(projects,'projects.json'),'utf8')).projects[0];
+        assert.equal(savedProject.xliff, 'p/p.xlf', 'Statistics updates preserve a portable project path');
+        result=await cli(['read','p'],env); assert.equal(result.code,0,result.err+'\n'+log); assert.equal(JSON.parse(result.out).segments[0].target,'<target>您好</target>');
+        const exportPath = join(home, 'translations.tmx');
+        const exported = await fetch(url+'/projects/exportTmx', {method:'POST',body:JSON.stringify({project:'p',output:exportPath})});
+        const exportJob = await exported.json();
+        assert.equal(exportJob.status, 'Success');
+        let complete = false;
+        for (let attempt=0; attempt<100; attempt++) {
+            const state = await (await fetch(url+'/projects/status', {method:'POST',body:JSON.stringify({process:exportJob.process})})).json();
+            assert.notEqual(state.progress, 'Error', JSON.stringify(state));
+            if (state.progress === 'Completed') { complete=true; break; }
+            await new Promise(resolve => setTimeout(resolve, 20));
+        }
+        assert.ok(complete, 'TMX export completed');
+        const exportedTmx = await readFile(exportPath,'utf8');
+        assert.match(exportedTmx, /已确认/);
+        assert.doesNotMatch(exportedTmx, /您好/, 'Agent drafts must not enter confirmed TMX exports');
+        await fetch(url+'/projects/close',{method:'POST',body:JSON.stringify({project:'p'})});
+
         result=await cli(['apply',patch],env); assert.equal(result.code,1); assert.match(result.err,/Conflict/);
         result=await cli(['undo','p',batch],env); assert.equal(result.code,0,result.err);
-        result=await cli(['read','p'],env); assert.equal(JSON.parse(result.out).segments[0].target,'<target>你好</target>');
+        result=await cli(['read','p'],env); assert.equal(result.code,0,result.err+'\n'+log); assert.equal(JSON.parse(result.out).segments[0].target,'<target>你好</target>');
         // The editor uses this route to open the shared store; Agent must not overwrite its draft.
         const opened=await fetch(url+'/projects/getSegment',{method:'POST',body:JSON.stringify({project:'p',file:row.file,unit:row.unit,segment:row.segment})});
         assert.equal((await opened.json()).status,'Success');
@@ -64,7 +83,10 @@ test('real Java server + CLI: read/apply/undo, editor conflict, authentication',
         result=await cli(['history','p'],env); assert.equal(result.code,0,result.err); assert.equal(JSON.parse(result.out).batches.length,2);
         assert.ok(JSON.parse(result.out).batches.some(b => b.instruction.includes('Style: yikeke@1.0.0')));
     } finally {
-        server.kill(); await new Promise(r=>server.once('exit',r));
+        if (server.exitCode === null && server.signalCode === null) {
+            const exited = new Promise(r => server.once('exit', r));
+            server.kill(); await exited;
+        }
         await rm(home,{recursive:true,force:true});
     }
 });

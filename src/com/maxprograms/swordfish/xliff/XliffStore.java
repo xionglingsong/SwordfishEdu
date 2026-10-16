@@ -137,6 +137,7 @@ public class XliffStore {
 	private PreparedStatement insertMetadata;
 	private PreparedStatement insertFileData;
 	private PreparedStatement insertContextStmt;
+	private PreparedStatement getRepeated;
 
 	private Statement stmt;
 	private boolean preserve;
@@ -148,6 +149,7 @@ public class XliffStore {
 	private static boolean caseSensitiveMatches;
 	private static boolean autoConfirm;
 	private static int matchThreshold;
+	private static int maxThreads = Runtime.getRuntime().availableProcessors();
 
 	private int index;
 	private int nextId;
@@ -192,7 +194,6 @@ public class XliffStore {
 		builder = new SAXBuilder();
 		builder.setEntityResolver(CatalogBuilder.getCatalog(catalog));
 
-		DriverManager.registerDriver(new org.sqlite.JDBC());
 		conn = DriverManager
 				.getConnection("jdbc:sqlite:" + database.getAbsolutePath().replace('\\', '/') + "/database.db");
 		conn.setAutoCommit(false);
@@ -249,6 +250,28 @@ public class XliffStore {
 			}
 			conn.commit();
 		}
+
+		// check if fuzzy column exists in matches table
+
+		sql = "PRAGMA table_info(matches);";
+		boolean fuzzyExists = false;
+		try (Statement st = conn.createStatement()) {
+			try (ResultSet rs = st.executeQuery(sql)) {
+				while (rs.next()) {
+					if ("fuzzy".equals(rs.getString(2))) {
+						fuzzyExists = true;
+						break;
+					}
+				}
+			}
+		}
+		if (!fuzzyExists) {
+			sql = "ALTER TABLE matches ADD COLUMN fuzzy INTEGER DEFAULT 0;";
+			try (Statement st = conn.createStatement()) {
+				st.execute(sql);
+			}
+			conn.commit();
+		}
 		sql = "PRAGMA table_info(metadata);";
 		boolean metadataExists = false;
 		try (Statement st = conn.createStatement()) {
@@ -259,7 +282,6 @@ public class XliffStore {
 			}
 		}
 		if (!metadataExists) {
-			logger.log(Level.INFO, "Metadata table does not exist, creating it.");
 			String metadata = """
 					CREATE TABLE metadata (
 					    file VARCHAR(50),
@@ -282,7 +304,6 @@ public class XliffStore {
 			}
 		}
 		if (!filesDataExists) {
-			logger.log(Level.INFO, "Files data table does not exist, creating it.");
 			String filesData = """
 					CREATE TABLE filesdata (
 					file VARCHAR(50),
@@ -307,7 +328,6 @@ public class XliffStore {
 			}
 		}
 		if (!contextExists) {
-			logger.log(Level.INFO, "Context table does not exist, creating it.");
 			String context = """
 					CREATE TABLE context (
 					file VARCHAR(50),
@@ -360,7 +380,6 @@ public class XliffStore {
 				}
 			}
 			if (!indexExists) {
-				logger.log(Level.INFO, "Creating index: " + indexName);
 				String createIndexSql = switch (indexName) {
 					case "idx_segments_type_state" -> "CREATE INDEX idx_segments_type_state ON segments(type, state)";
 					case "idx_segments_sourcetext" -> "CREATE INDEX idx_segments_sourcetext ON segments(sourceText)";
@@ -386,11 +405,11 @@ public class XliffStore {
 		updateTargetStmt = conn.prepareStatement(
 				"UPDATE segments SET target=?, targetText=?, state=? WHERE file=? AND unitId=? AND segId=?");
 		insertMatch = conn.prepareStatement(
-				"INSERT INTO matches (file, unitId, segId, matchId, origin, type, similarity, source, target, data, compressed) VALUES(?,?,?,?,?,?,?,?,?,?,?)");
+				"INSERT INTO matches (file, unitId, segId, matchId, origin, type, similarity, fuzzy, source, target, data, compressed) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)");
 		updateMatch = conn.prepareStatement(
-				"UPDATE matches SET origin=?, type=?, similarity=?, source=?, target=?, data=?, compressed=? WHERE file=? AND unitId=? AND segId=? AND matchId=?");
+				"UPDATE matches SET origin=?, type=?, similarity=?, fuzzy=?, source=?, target=?, data=?, compressed=? WHERE file=? AND unitId=? AND segId=? AND matchId=?");
 		getMatches = conn.prepareStatement(
-				"SELECT file, unitId, segId, matchId, origin, type, similarity, source, target, data, compressed FROM matches WHERE file=? AND unitId=? AND segId=? ORDER BY similarity DESC");
+				"SELECT file, unitId, segId, matchId, origin, type, similarity, fuzzy, source, target, data, compressed FROM matches WHERE file=? AND unitId=? AND segId=? ORDER BY similarity DESC");
 		bestMatch = conn.prepareStatement(
 				"SELECT type, similarity FROM matches WHERE file=? AND unitId=? AND segId=? ORDER BY similarity DESC LIMIT 1");
 		insertTerm = conn.prepareStatement(
@@ -404,15 +423,23 @@ public class XliffStore {
 		getContext = conn.prepareStatement("SELECT unitId, segId FROM segments WHERE file=? AND child=?");
 		insertMetadata = conn
 				.prepareStatement("INSERT INTO metadata (file, unitId,  customdata) VALUES(?,?,?)");
-
+		getRepeated = conn.prepareStatement(
+				"SELECT COUNT(*) FROM segments WHERE sourceText=? AND type='S'");
 		stmt = conn.createStatement();
 		if (needsLoading) {
 			document = builder.build(xliffFile);
 			parseDocument();
 			conn.commit();
 			indexSegments();
-		} else if (!filesDataExists) {
-			harvestFilesData();
+		} else {
+			if (!filesDataExists) {
+				harvestFilesData();
+			}
+			try (ResultSet versionRs = stmt.executeQuery("PRAGMA user_version")) {
+				if (versionRs.next() && versionRs.getInt(1) == 0) {
+					indexSegments();
+				}
+			}
 		}
 	}
 
@@ -463,6 +490,7 @@ public class XliffStore {
 				    origin VARCHAR(256),
 				    type CHAR(2) NOT NULL DEFAULT 'tm',
 				    similarity INTEGER DEFAULT 0,
+				    fuzzy INTEGER DEFAULT 0,
 				    source TEXT NOT NULL,
 				    target TEXT NOT NULL,
 				    data TEXT NOT NULL,
@@ -621,27 +649,23 @@ public class XliffStore {
 	}
 
 	private Element toMetadata(String string) throws SAXException, IOException, ParserConfigurationException {
-		try {
-			Element metadata = new Element("mda:metadata");
-			Element nameSpaced = Utils.toElement(string.replace("mda:", ""));
-			metadata.setAttributes(nameSpaced.getAttributes());
-			List<Element> children = nameSpaced.getChildren();
-			for (Element child : children) {
-				Element cloned = new Element("mda:" + child.getName());
-				cloned.setAttributes(child.getAttributes());
-				metadata.addContent(cloned);
-				List<Element> grandChildren = child.getChildren();
-				for (Element grandChild : grandChildren) {
-					Element grandCloned = new Element("mda:" + grandChild.getName());
-					grandCloned.setAttributes(grandChild.getAttributes());
-					grandCloned.setText(grandChild.getText());
-					cloned.addContent(grandCloned);
-				}
+		Element metadata = new Element("mda:metadata");
+		Element nameSpaced = Utils.toElement(string.replace("mda:", ""));
+		metadata.setAttributes(nameSpaced.getAttributes());
+		List<Element> children = nameSpaced.getChildren();
+		for (Element child : children) {
+			Element cloned = new Element("mda:" + child.getName());
+			cloned.setAttributes(child.getAttributes());
+			metadata.addContent(cloned);
+			List<Element> grandChildren = child.getChildren();
+			for (Element grandChild : grandChildren) {
+				Element grandCloned = new Element("mda:" + grandChild.getName());
+				grandCloned.setAttributes(grandChild.getAttributes());
+				grandCloned.setText(grandChild.getText());
+				cloned.addContent(grandCloned);
 			}
-			return metadata;
-		} catch (SAXException | IOException | ParserConfigurationException e) {
-			throw new RuntimeException();
 		}
+		return metadata;
 	}
 
 	private void recurse(Element e) throws SQLException, IOException, SAXException, ParserConfigurationException {
@@ -661,12 +685,12 @@ public class XliffStore {
 					Element metadata = toMetadata(pis.get(0).getData());
 					JSONObject json = getJsonMetadata(metadata);
 					customMetadata = json.toString(2);
-				} catch (RuntimeException ex) {
+				} catch (RuntimeException _) {
 					try {
 						JSONObject json = new JSONObject(pis.get(0).getData());
 						customMetadata = json.toString(2);
 					} catch (JSONException jse) {
-						logger.log(Level.WARNING, "Error parsing custom metadata for file " + currentFile, e);
+						logger.log(Level.WARNING, "Error parsing custom metadata for file " + currentFile, jse);
 					}
 				}
 			}
@@ -784,14 +808,16 @@ public class XliffStore {
 					}
 					json.put("data", groupsArray);
 					customMetadataString = json.toString(2);
-				} catch (RuntimeException ex) {
+				} catch (SAXException | IOException | ParserConfigurationException _) {
 					try {
 						JSONObject json = new JSONObject(pis.get(0).getData());
 						customMetadataString = json.toString(2);
 					} catch (JSONException jse) {
-						logger.log(Level.WARNING, "Error parsing custom metadata for unit " + currentUnit, e);
+						logger.log(Level.WARNING, "Error parsing custom metadata for unit " + currentUnit, jse);
 					}
 				}
+			} else if (metadata != null) {
+				customMetadataString = metadataToJson(metadata.getChildren("mda:metaGroup"));
 			}
 			insertMetadata.setString(1, currentFile);
 			insertMetadata.setString(2, currentUnit);
@@ -837,13 +863,20 @@ public class XliffStore {
 			Element source = e.getChild("source");
 			boolean sourcePreserve = "preserve".equals(source.getAttributeValue("xml:space", "default"));
 			Element target = e.getChild("target");
-			if (target == null) {
+			boolean syntheticTarget = (target == null);
+			if (syntheticTarget) {
 				target = new Element("target");
 				if (source.hasAttribute("xml:space")) {
 					target.setAttribute("xml:space", source.getAttributeValue("xml:space"));
 				}
 			}
 
+			if (!sourcePreserve) {
+				source = XliffUtils.normalizeSpaces(source);
+			}
+			if (!"preserve".equals(target.getAttributeValue("xml:space", "default"))) {
+				target = XliffUtils.normalizeSpaces(target);
+			}
 			List<String> segmentNotes = new Vector<>();
 			if (!notesMap.isEmpty()) {
 				segmentNotes.addAll(harvestNotes(source));
@@ -852,8 +885,13 @@ public class XliffStore {
 				target = FromXliff2.removeComments(target);
 			}
 
-			state = e.getAttributeValue("state",
-					XliffUtils.pureText(target).isEmpty() ? Constants.INITIAL : Constants.TRANSLATED);
+			if (syntheticTarget) {
+				state = Constants.INITIAL;
+			} else if (e.hasAttribute("state")) {
+				state = e.getAttributeValue("state");
+			} else {
+				state = XliffUtils.pureText(target).isEmpty() ? Constants.INITIAL : Constants.TRANSLATED;
+			}
 			String subState = e.getAttributeValue("subState");
 			boolean translate = true;
 			if ("openxliff:locked".equals(subState)) {
@@ -867,6 +905,11 @@ public class XliffStore {
 				String noteId = segmentNotes.get(i);
 				Element note = notesMap.get(noteId);
 				insertNote(currentFile, currentUnit, id, note);
+			}
+			if (segmentNotes.isEmpty() && !notesMap.isEmpty()) {
+				for (Element note : notesMap.values()) {
+					insertNote(currentFile, currentUnit, id, note);
+				}
 			}
 		}
 		if ("ignorable".equals(e.getName())) {
@@ -892,6 +935,36 @@ public class XliffStore {
 		insertContextStmt.setString(2, currentUnit);
 		insertContextStmt.setString(3, string);
 		insertContextStmt.execute();
+	}
+
+	private String metadataToJson(List<Element> groups) {
+		JSONObject json = new JSONObject();
+		JSONArray groupsArray = new JSONArray();
+		for (Element group : groups) {
+			JSONObject groupJson = new JSONObject();
+			if (group.hasAttribute("id")) {
+				groupJson.put("id", group.getAttributeValue("id"));
+			}
+			if (group.hasAttribute("category")) {
+				groupJson.put("category", group.getAttributeValue("category"));
+			}
+			if (group.hasAttribute("appliesTo")) {
+				groupJson.put("appliesTo", group.getAttributeValue("appliesTo"));
+			}
+			JSONArray metaArray = new JSONArray();
+			List<Element> items = group.getChildren("mda:meta");
+			for (Element item : items) {
+				JSONObject metaJson = new JSONObject();
+				metaJson.put("type", item.getAttributeValue("type"));
+				metaJson.put("value", item.getText());
+				metaArray.put(metaJson);
+			}
+			groupJson.put("meta", metaArray);
+			groupsArray.put(groupJson);
+			// OpenXLIFF doesn't use nested metaGroups, so we can ignore them
+		}
+		json.put("data", groupsArray);
+		return json.toString(2);
 	}
 
 	private JSONObject getJsonMetadata(Element metadata) {
@@ -998,11 +1071,16 @@ public class XliffStore {
 		if (segment.startsWith("#")) {
 			segment = segment.substring(1);
 		}
+		int slash = segment.lastIndexOf('/');
+		if (slash != -1) {
+			segment = segment.substring(slash + 1);
+		}
 		String type = match.getAttributeValue("type", Constants.TM);
 		String origin = match.getAttributeValue("origin");
 		int similarity = Math.round(Float.parseFloat(match.getAttributeValue("matchQuality", "0.0")));
+		int fuzzy = Math.round(Float.parseFloat(match.getAttributeValue("similarity", "0.0")));
 
-		insertMatch(matchId, file, unit, segment, origin, type, similarity, source, target, tagsData);
+		insertMatch(matchId, file, unit, segment, origin, type, similarity, fuzzy, source, target, tagsData);
 	}
 
 	private void insertNote(String file, String unit, String segId, Element note) throws SQLException {
@@ -1046,12 +1124,12 @@ public class XliffStore {
 		}
 		boolean restrictByState = showUntranslated || showTranslated || showConfirmed;
 		queryBuilder.append(
-				"SELECT file, unitId, segId, child, source, target, tags, state, space, translate, idx FROM segments WHERE type='S'");
+				"SELECT file, unitId, segId, child, source, target, sourceText, tags, state, space, translate, idx FROM segments WHERE type='S'");
 		if (!filterText.isEmpty()) {
 			if (regExp) {
 				try {
 					Pattern.compile(filterText);
-				} catch (PatternSyntaxException e) {
+				} catch (PatternSyntaxException _) {
 					throw new IOException(Messages.getString("XliffStore.47"));
 				}
 				if ("source".equals(filterLanguage)) {
@@ -1091,7 +1169,7 @@ public class XliffStore {
 			}
 		}
 		if (sortOption.equals("none")) {
-			queryBuilder.append(" ORDER BY file, child ");
+			queryBuilder.append(" ORDER BY CAST(file AS INTEGER), child ");
 		}
 		if (sortOption.equals("source")) {
 			queryBuilder.append(" ORDER BY sourceText");
@@ -1121,11 +1199,12 @@ public class XliffStore {
 				String segId = rs.getString(3);
 				String src = rs.getString(5);
 				String tgt = rs.getString(6);
-				int tags = rs.getInt(7);
-				String segState = rs.getString(8);
-				boolean segPreserve = "Y".equals(rs.getString(9));
-				boolean segTranslate = "Y".equals(rs.getString(10));
-				int idx = rs.getInt(11);
+				String srcText = rs.getString(7);
+				int tags = rs.getInt(8);
+				String segState = rs.getString(9);
+				boolean segPreserve = "Y".equals(rs.getString(10));
+				boolean segTranslate = "Y".equals(rs.getString(11));
+				int idx = rs.getInt(12);
 
 				JSONObject tagsData = new JSONObject();
 				if (tags > 0) {
@@ -1176,6 +1255,7 @@ public class XliffStore {
 				row.put("hasMetadata", hasMetadata);
 				row.put("tagErrors", tagErrors);
 				row.put("spaceErrors", spaceErrors);
+				row.put("repeated", isRepeated(srcText));
 				result.add(row);
 			}
 		}
@@ -1226,6 +1306,31 @@ public class XliffStore {
 			}
 		}
 		return customData;
+	}
+
+	private boolean hasRepeated(String file, String unit, String segment) throws SQLException {
+		boolean result = false;
+		try (PreparedStatement stmt = conn
+				.prepareStatement("SELECT sourceText FROM segments WHERE file=? AND unitid=? AND segid=?")) {
+			stmt.setString(1, file);
+			stmt.setString(2, unit);
+			stmt.setString(3, segment);
+			try (ResultSet rs = stmt.executeQuery()) {
+				if (rs.next()) {
+					result = isRepeated(rs.getString(1));
+				}
+			}
+		}
+		return result;
+	}
+
+	private boolean isRepeated(String src) throws SQLException {
+		boolean result = false;
+		getRepeated.setString(1, src);
+		try (ResultSet rs = getRepeated.executeQuery()) {
+			result = rs.getInt(1) > 1;
+		}
+		return result;
 	}
 
 	public synchronized JSONArray getNotes(String file, String unit, String segId) throws SQLException {
@@ -1341,11 +1446,12 @@ public class XliffStore {
 
 	public int getFileStart(String file) throws SQLException {
 		int result = -1;
-		try (PreparedStatement prepStmt = conn.prepareStatement("""
-				SELECT row_num FROM (
-				        SELECT file, unitId, ROW_NUMBER() OVER (ORDER BY file, unitId) AS row_num FROM segments
-				    ) sub WHERE file = ? ORDER BY row_num LIMIT 1;
-				    """)) {
+		try (PreparedStatement prepStmt = conn.prepareStatement(
+				"""
+						SELECT row_num FROM (
+							    SELECT file, unitId, ROW_NUMBER() OVER (ORDER BY CAST(file AS INTEGER), child) AS row_num FROM segments WHERE type='S'
+							) sub WHERE file = ? ORDER BY row_num LIMIT 1;
+						  """)) {
 			prepStmt.setString(1, file);
 			try (ResultSet rs = prepStmt.executeQuery()) {
 				while (rs.next()) {
@@ -1356,7 +1462,42 @@ public class XliffStore {
 		return result;
 	}
 
-	public int getSameSource(String file, String unit, String segment) throws SQLException {
+	public int previousSameSource(String file, String unit, String segment) throws SQLException {
+		int result = -1;
+		String source = "";
+		int currentIdx = -1;
+
+		// Step 1: Get the source text AND index of current segment
+		try (PreparedStatement prepStmt = conn.prepareStatement(
+				"SELECT sourceText, idx FROM segments WHERE file=? AND unitId=? AND segId=? AND type='S'")) {
+			prepStmt.setString(1, file);
+			prepStmt.setString(2, unit);
+			prepStmt.setString(3, segment);
+			try (ResultSet rs = prepStmt.executeQuery()) {
+				if (rs.next()) {
+					source = rs.getString(1);
+					currentIdx = rs.getInt(2);
+				}
+			}
+		}
+
+		// Step 2: Find the previous segment with same source that has lower idx
+		if (!source.isEmpty() && currentIdx != -1) {
+			try (PreparedStatement prepStmt = conn.prepareStatement(
+					"SELECT idx FROM segments WHERE sourceText = ? AND type='S' AND idx < ? ORDER BY idx DESC LIMIT 1")) {
+				prepStmt.setString(1, source);
+				prepStmt.setInt(2, currentIdx);
+				try (ResultSet rs = prepStmt.executeQuery()) {
+					if (rs.next()) {
+						result = rs.getInt(1) + 1; // +1 because UI displays 1-based indexing
+					}
+				}
+			}
+		}
+		return result;
+	}
+
+	public int nextSameSource(String file, String unit, String segment) throws SQLException {
 		int result = -1;
 		String source = "";
 		int currentIdx = -1;
@@ -1464,7 +1605,7 @@ public class XliffStore {
 						if (number > maxId) {
 							maxId = number;
 						}
-					} catch (NumberFormatException e) {
+					} catch (NumberFormatException _) {
 						// ignore
 					}
 				}
@@ -1589,7 +1730,7 @@ public class XliffStore {
         return AgentEdits.run(conn, request);
     }
 
-	public void close() throws SQLException {
+	public synchronized void close() throws SQLException {
 		getUnitData.close();
 		getSource.close();
 		getTargetStmt.close();
@@ -1605,6 +1746,7 @@ public class XliffStore {
 		getChild.close();
 		getContext.close();
 		insertMetadata.close();
+		getRepeated.close();
 		stmt.close();
 		conn.commit();
 		conn.close();
@@ -1637,6 +1779,9 @@ public class XliffStore {
 			matchThreshold = json.getInt("matchThreshold");
 		} else {
 			matchThreshold = 60;
+		}
+		if (json.has("maxThreads")) {
+			maxThreads = json.getInt("maxThreads");
 		}
 	}
 
@@ -1723,6 +1868,7 @@ public class XliffStore {
 		result.put("hasMetadata", hasMetadata(file, unit));
 		result.put("hasNotes", hasNotes(file, unit, segment));
 		result.put("hasContext", hasContext(file, unit));
+		result.put("repeated", hasRepeated(file, unit, segment));
 
 		JSONObject originalData = getUnitData(file, unit);
 		tag = 1;
@@ -2026,6 +2172,12 @@ public class XliffStore {
 
 	private synchronized void insertMatch(String matchId, String file, String unit, String segment, String origin,
 			String type, int similarity, Element source, Element target, JSONObject tagsData) throws SQLException {
+		insertMatch(matchId, file, unit, segment, origin, type, similarity, similarity, source, target, tagsData);
+	}
+
+	private synchronized void insertMatch(String matchId, String file, String unit, String segment, String origin,
+			String type, int similarity, int fuzzy, Element source, Element target, JSONObject tagsData)
+			throws SQLException {
 		if (Constants.MT.equals(type)) {
 			matchId = origin;
 		}
@@ -2081,14 +2233,15 @@ public class XliffStore {
 				updateMatch.setString(1, origin);
 				updateMatch.setString(2, type);
 				updateMatch.setInt(3, similarity);
-				updateMatch.setString(4, source.toString());
-				updateMatch.setString(5, target.toString());
-				updateMatch.setString(6, data);
-				updateMatch.setString(7, "N");
-				updateMatch.setString(8, file);
-				updateMatch.setString(9, unit);
-				updateMatch.setString(10, segment);
-				updateMatch.setString(11, matchId);
+				updateMatch.setInt(4, fuzzy);
+				updateMatch.setString(5, source.toString());
+				updateMatch.setString(6, target.toString());
+				updateMatch.setString(7, data);
+				updateMatch.setString(8, "N");
+				updateMatch.setString(9, file);
+				updateMatch.setString(10, unit);
+				updateMatch.setString(11, segment);
+				updateMatch.setString(12, matchId);
 				updateMatch.execute();
 				return;
 			}
@@ -2100,10 +2253,11 @@ public class XliffStore {
 		insertMatch.setString(5, origin);
 		insertMatch.setString(6, type);
 		insertMatch.setInt(7, similarity);
-		insertMatch.setString(8, source.toString());
-		insertMatch.setString(9, target.toString());
-		insertMatch.setString(10, data);
-		insertMatch.setString(11, "N");
+		insertMatch.setInt(8, fuzzy);
+		insertMatch.setString(9, source.toString());
+		insertMatch.setString(10, target.toString());
+		insertMatch.setString(11, data);
+		insertMatch.setString(12, "N");
 		insertMatch.execute();
 	}
 
@@ -2122,9 +2276,10 @@ public class XliffStore {
 				match.put("origin", rs.getString(5));
 				match.put("type", rs.getString(6));
 				match.put("similarity", rs.getInt(7));
-				match.put("source", rs.getString(8));
+				match.put("fuzzy", rs.getInt(8));
+				match.put("source", rs.getString(9));
 				match.put("srcLang", srcLang);
-				match.put("target", rs.getString(9));
+				match.put("target", rs.getString(10));
 				match.put("tgtLang", tgtLang);
 				result.put(match);
 			}
@@ -2629,12 +2784,13 @@ public class XliffStore {
 				match.put("origin", rs.getString(5));
 				match.put("type", rs.getString(6));
 				match.put("similarity", rs.getInt(7));
+				match.put("fuzzy", rs.getInt(8));
 				match.put("srcLang", srcLang);
 				match.put("tgtLang", tgtLang);
 
-				String src = rs.getString(8);
+				String src = rs.getString(9);
 				Element source = XliffUtils.buildElement(src);
-				String tgt = rs.getString(9);
+				String tgt = rs.getString(10);
 				Element target = XliffUtils.buildElement(tgt);
 
 				List<Element> sourceTags = source.getChildren();
@@ -2848,16 +3004,17 @@ public class XliffStore {
 					Map<String, String> tags = getTags(source);
 					String[] context = getSurroundingSegments(file, unit, segment);
 
-					Element tuv = XliffUtils.toTu(key.toString(), source, target, tags, srcLang, tgtLang, context);
-					tuv.getContent().add(0, d);
+					Element tu = XliffUtils.toTu(key.toString(), source, target, tags, srcLang, tgtLang, context);
+					tu.removeAttribute("tuid");
+					tu.getContent().add(0, d);
 					if (c != null) {
-						tuv.getContent().add(0, c);
+						tu.getContent().add(0, c);
 					}
 					if (s != null) {
-						tuv.getContent().add(0, s);
+						tu.getContent().add(0, s);
 					}
-					Indenter.indent(tuv, 2);
-					writeString(out, tuv.toString());
+					Indenter.indent(tu, 2);
+					writeString(out, tu.toString());
 				}
 			}
 			writeString(out, "</body>\n");
@@ -2958,13 +3115,125 @@ public class XliffStore {
 			return;
 		}
 		getPreferences();
+		patchLegacySkeletons();
 		File adjusted = reviewStates();
-		String maxThreads = "" + Runtime.getRuntime().availableProcessors();
-		List<String> result = Merge.merge(adjusted.getAbsolutePath(), output, catalog, acceptUnconfirmed, maxThreads);
+		List<String> result = Merge.merge(adjusted.getAbsolutePath(), output, catalog, acceptUnconfirmed,
+				"" + maxThreads);
 		if (!"0".equals(result.get(0))) {
 			throw new IOException(result.get(1));
 		}
 		Files.delete(adjusted.toPath());
+	}
+
+	private void patchLegacySkeletons() throws SAXException, IOException, ParserConfigurationException {
+		Document xliff2 = builder.build(xliffFile);
+		List<Element> fileElements = xliff2.getRootElement().getChildren("file");
+		if (fileElements.isEmpty()) {
+			return;
+		}
+		Element firstFile = fileElements.get(0);
+		if (!isLegacyVersion(getMetaValue(firstFile, "tool", "tool-version"))) {
+			return;
+		}
+		File xliffDir = new File(xliffFile).getParentFile();
+		Set<String> patched = new HashSet<>();
+		for (Element fileEl : fileElements) {
+			if (!"x-xliff".equals(getMetaValue(fileEl, "format", "datatype"))) {
+				continue;
+			}
+			Element skeletonEl = fileEl.getChild("skeleton");
+			if (skeletonEl == null) {
+				continue;
+			}
+			String href = skeletonEl.getAttributeValue("href");
+			if (href.isEmpty()) {
+				continue;
+			}
+			File hrefFile = new File(href);
+			File skeletonFile = hrefFile.isAbsolute() ? hrefFile : new File(xliffDir, href);
+			if (!skeletonFile.exists()) {
+				continue;
+			}
+			String canonicalPath = skeletonFile.getCanonicalPath();
+			if (patched.contains(canonicalPath)) {
+				continue;
+			}
+			patchSkeletonFile(skeletonFile, fileEl.getAttributeValue("id"));
+			patched.add(canonicalPath);
+		}
+	}
+
+	private String getMetaValue(Element fileEl, String category, String type) {
+		Element metadata = fileEl.getChild("mda:metadata");
+		if (metadata == null) {
+			return "";
+		}
+		for (Element group : metadata.getChildren("mda:metaGroup")) {
+			if (category.equals(group.getAttributeValue("category"))) {
+				for (Element meta : group.getChildren("mda:meta")) {
+					if (type.equals(meta.getAttributeValue("type"))) {
+						return meta.getText();
+					}
+				}
+			}
+		}
+		return "";
+	}
+
+	private static boolean isLegacyVersion(String version) {
+		if (version.isEmpty()) {
+			return false;
+		}
+		try {
+			return Integer.parseInt(version.split("\\.")[0]) < 6;
+		} catch (NumberFormatException e) {
+			return false;
+		}
+	}
+
+	private void patchSkeletonFile(File skeletonFile, String xliffFileId)
+			throws SAXException, IOException, ParserConfigurationException {
+		Document skeletonDoc = builder.build(skeletonFile.getAbsolutePath());
+		List<Element> fileElements = skeletonDoc.getRootElement().getChildren("file");
+		boolean modified = false;
+		for (Element fileEl : fileElements) {
+			String original = fileEl.getAttributeValue("original");
+			if (patchFilePIs(fileEl, original, xliffFileId)) {
+				modified = true;
+			}
+		}
+		if (modified) {
+			XMLOutputter outputter = new XMLOutputter();
+			outputter.preserveSpace(true);
+			try (FileOutputStream out = new FileOutputStream(skeletonFile)) {
+				outputter.output(skeletonDoc, out);
+			}
+		}
+	}
+
+	private boolean patchFilePIs(Element e, String original, String xliffFileId) {
+		String prefix = original + "_";
+		boolean modified = false;
+		for (XMLNode node : e.getContent()) {
+			if (node.getNodeType() == XMLNode.PROCESSING_INSTRUCTION_NODE) {
+				PI pi = (PI) node;
+				if ("OpenXLIFF".equals(pi.getTarget())) {
+					String data = pi.getData();
+					if (data.startsWith(prefix)) {
+						pi.setData(xliffFileId + "_" + data.substring(prefix.length()));
+						modified = true;
+					} else if (data.matches("\\d+")) {
+						pi.setData(xliffFileId + "_" + data);
+						modified = true;
+					}
+				}
+			} else if (node.getNodeType() == XMLNode.ELEMENT_NODE) {
+				if (patchFilePIs((Element) node, original, xliffFileId)) {
+					modified = true;
+				}
+			}
+		}
+		return modified;
 	}
 
 	private File reviewStates() throws SAXException, IOException, ParserConfigurationException {
@@ -2982,6 +3251,9 @@ public class XliffStore {
 	}
 
 	private void recurseStates(Element e) {
+		if ("unit".equals(e.getName())) {
+			e.removeChild("mtc:matches");
+		}
 		if ("segment".equals(e.getName())) {
 			if ("initial".equals(e.getAttributeValue("state"))) {
 				Element source = e.getChild("source");
@@ -3022,7 +3294,7 @@ public class XliffStore {
 		document.getRootElement().setAttribute("xmlns:mtc", "urn:oasis:names:tc:xliff:matches:2.0");
 		document.getRootElement().setAttribute("xmlns:gls", "urn:oasis:names:tc:xliff:glossary:2.0");
 		unitMatches = conn.prepareStatement(
-				"SELECT file, unitId, segId, matchId, origin, type, similarity, source, target, data, compressed FROM matches WHERE file=? AND unitId=? ORDER BY segId, similarity DESC");
+				"SELECT file, unitId, segId, matchId, origin, type, similarity, fuzzy, source, target, data, compressed FROM matches WHERE file=? AND unitId=? ORDER BY segId, similarity DESC");
 		unitTerms = conn.prepareStatement(
 				"SELECT file, unitId, segId, termId, origin, source, target FROM terms WHERE file=? AND unitId=? ORDER BY segId");
 		unitNotes = conn
@@ -3106,6 +3378,7 @@ public class XliffStore {
 		if ("unit".equals(e.getName())) {
 			tagCount = 0;
 			currentUnit = e.getAttributeValue("id");
+			mergeDuplicateOriginalData(e);
 			JSONObject unitData = new JSONObject();
 			unitData.put("file", currentFile);
 			unitData.put("unit", currentUnit);
@@ -3241,6 +3514,46 @@ public class XliffStore {
 		}
 	}
 
+	private void mergeDuplicateOriginalData(Element unit) {
+		List<Element> originalDataList = unit.getChildren("originalData");
+		if (originalDataList.size() < 2) {
+			return;
+		}
+		Element first = originalDataList.get(0);
+		Set<String> existingIds = new HashSet<>();
+		List<Element> existingData = first.getChildren("data");
+		for (int i = 0; i < existingData.size(); i++) {
+			existingIds.add(existingData.get(i).getAttributeValue("id"));
+		}
+		for (int i = 1; i < originalDataList.size(); i++) {
+			List<Element> dataChildren = originalDataList.get(i).getChildren("data");
+			for (int j = 0; j < dataChildren.size(); j++) {
+				Element data = dataChildren.get(j);
+				String id = data.getAttributeValue("id");
+				if (!existingIds.contains(id)) {
+					existingIds.add(id);
+					first.addContent(data);
+				}
+			}
+		}
+		List<XMLNode> newContent = new Vector<>();
+		boolean kept = false;
+		List<XMLNode> oldContent = unit.getContent();
+		Iterator<XMLNode> it = oldContent.iterator();
+		while (it.hasNext()) {
+			XMLNode node = it.next();
+			if (node.getNodeType() == XMLNode.ELEMENT_NODE && "originalData".equals(((Element) node).getName())) {
+				if (!kept) {
+					newContent.add(first);
+					kept = true;
+				}
+				continue;
+			}
+			newContent.add(node);
+		}
+		unit.setContent(newContent);
+	}
+
 	private void insertOriginalData(Element unit, Element originalData) {
 		List<XMLNode> newContent = new Vector<>();
 		boolean added = false;
@@ -3250,7 +3563,7 @@ public class XliffStore {
 			XMLNode node = it.next();
 			if (node.getNodeType() == XMLNode.ELEMENT_NODE) {
 				Element e = (Element) node;
-				if ("segment".equals(e.getName()) || "ignorable".equals(e.getName()) && !added) {
+				if (("segment".equals(e.getName()) || "ignorable".equals(e.getName())) && !added) {
 					newContent.add(originalData);
 					added = true;
 				}
@@ -3315,8 +3628,12 @@ public class XliffStore {
 				match.setAttribute("origin", rs.getString(5));
 				match.setAttribute("type", rs.getString(6));
 				match.setAttribute("matchQuality", "" + rs.getInt(7));
+				int fuzzy = rs.getInt(8);
+				if (fuzzy != 0) {
+					match.setAttribute("similarity", "" + fuzzy);
+				}
 				Element originalData = new Element("originalData");
-				String data = rs.getString(10);
+				String data = rs.getString(11);
 				if (!data.isEmpty()) {
 					originalData = XliffUtils.buildElement(data);
 					List<Element> newData = new Vector<>();
@@ -3338,8 +3655,8 @@ public class XliffStore {
 				while (it.hasNext()) {
 					dataRefs.add(it.next().getAttributeValue("id"));
 				}
-				match.addContent(XliffUtils.buildElement(rs.getString(8)));
 				match.addContent(XliffUtils.buildElement(rs.getString(9)));
+				match.addContent(XliffUtils.buildElement(rs.getString(10)));
 				removeMissingReferences(match.getChild("source"), dataRefs);
 				removeMissingReferences(match.getChild("target"), dataRefs);
 				matches.addContent(match);
@@ -4528,7 +4845,7 @@ public class XliffStore {
 		if (isRegExp) {
 			try {
 				Pattern.compile(searchText);
-			} catch (PatternSyntaxException e) {
+			} catch (PatternSyntaxException _) {
 				throw new IOException(Messages.getString("XliffStore.47"));
 			}
 			queryBuilder.append(" targetText REGEXP '");
@@ -4985,7 +5302,7 @@ public class XliffStore {
 		JSONObject result = new JSONObject();
 		JSONArray errors = new JSONArray();
 		int idx = 0;
-		String sql = "SELECT file, unitId, segId, child, source, target, targetText, translate FROM segments WHERE type='S' ORDER BY file, child ";
+		String sql = "SELECT file, unitId, segId, child, source, target, targetText, translate FROM segments WHERE type='S' ORDER BY CAST(file AS INTEGER), child ";
 		try (ResultSet rs = stmt.executeQuery(sql)) {
 			while (rs.next()) {
 				idx++;
@@ -5030,7 +5347,7 @@ public class XliffStore {
 
 	public void fixSpaces() throws SQLException, IOException, SAXException, ParserConfigurationException {
 		getPreferences();
-		String sql = "SELECT file, unitId, segId, child, source, target, targetText, translate FROM segments WHERE type='S' ORDER BY file, child ";
+		String sql = "SELECT file, unitId, segId, child, source, target, targetText, translate FROM segments WHERE type='S' ORDER BY CAST(file AS INTEGER), child ";
 		try (ResultSet rs = stmt.executeQuery(sql)) {
 			sql = "UPDATE segments SET target=?, targetText=?, state=? WHERE file=? AND unitId=? AND segId=?";
 			try (PreparedStatement fixStmt = conn.prepareStatement(sql)) {
@@ -5055,7 +5372,7 @@ public class XliffStore {
 						if (initial) {
 							try {
 								tgt = fixInitialSpaces(src, tgt);
-							} catch (Exception e) {
+							} catch (Exception _) {
 								// ignore
 							}
 						}
@@ -5199,7 +5516,7 @@ public class XliffStore {
 				String text = ((TextNode) node).getText();
 				for (int j = 0; j < text.length(); j++) {
 					char c = text.charAt(j);
-					if (!Character.isWhitespace(c)) {
+					if (!(Character.isWhitespace(c) || c == '\u00A0')) {
 						textFound = true;
 						break;
 					}
@@ -5216,7 +5533,7 @@ public class XliffStore {
 				String text = ((TextNode) node).getText();
 				for (int j = text.length() - 1; j >= 0; j--) {
 					char c = text.charAt(j);
-					if (!Character.isWhitespace(c)) {
+					if (!(Character.isWhitespace(c) || c == '\u00A0')) {
 						textFound = true;
 						break;
 					}
@@ -5233,7 +5550,7 @@ public class XliffStore {
 		JSONObject result = new JSONObject();
 		JSONArray errors = new JSONArray();
 		int idx = 0;
-		String sql = "SELECT file, unitId, segId, child, source, target, state, translate FROM segments WHERE type='S' ORDER BY file, child ";
+		String sql = "SELECT file, unitId, segId, child, source, target, state, translate FROM segments WHERE type='S' ORDER BY CAST(file AS INTEGER), child ";
 		try (ResultSet rs = stmt.executeQuery(sql)) {
 			while (rs.next()) {
 				idx++;
@@ -5403,7 +5720,7 @@ public class XliffStore {
 			String targetDir = LanguageUtils.isBiDi(tgtLang) ? " dir=\"rtl\"" : "";
 
 			try (ResultSet rs = stmt.executeQuery(
-					"SELECT source, target, state, space, translate, file, unitid, segid, child FROM segments WHERE type='S' ORDER BY file, child")) {
+					"SELECT source, target, state, space, translate, file, unitid, segid, child FROM segments WHERE type='S' ORDER BY CAST(file AS INTEGER), child")) {
 				int count = 1;
 				JSONObject tagsData = new JSONObject();
 				while (rs.next()) {
@@ -5912,7 +6229,7 @@ public class XliffStore {
 		String update = "UPDATE segments SET idx=? WHERE file=? AND unitID=? AND segId=?";
 		try (PreparedStatement prep = conn.prepareStatement(update)) {
 			try (Statement st = conn.createStatement()) {
-				String sql = "SELECT file, unitId, segId, child FROM segments WHERE type='S' ORDER BY file, child";
+				String sql = "SELECT file, unitId, segId, child FROM segments WHERE type='S' ORDER BY CAST(file AS INTEGER), child";
 				try (ResultSet rs = st.executeQuery(sql)) {
 					while (rs.next()) {
 						prep.setInt(1, idx++);
@@ -5934,6 +6251,7 @@ public class XliffStore {
 				prep.executeBatch();
 			}
 		}
+		stmt.execute("PRAGMA user_version = 1");
 		conn.commit();
 	}
 
@@ -6027,8 +6345,8 @@ public class XliffStore {
 			while (rs.next()) {
 				String id = rs.getString(4);
 				if (id.equals(matchId)) {
-					matchSource = rs.getString(8);
-					matchTarget = rs.getString(9);
+					matchSource = rs.getString(9);
+					matchTarget = rs.getString(10);
 					break;
 				}
 			}
@@ -6046,7 +6364,7 @@ public class XliffStore {
 	public JSONArray getFiles() throws JSONException, SQLException {
 		JSONArray result = new JSONArray();
 		try (PreparedStatement getFiles = conn.prepareStatement(
-				"SELECT file, original, metadata, customdata FROM filesdata WHERE sourceFile = ?")) {
+				"SELECT file, original, metadata, customdata FROM filesdata WHERE sourceFile = ? ORDER BY CAST(file AS INTEGER)")) {
 			try (Statement sourceGroup = conn.createStatement()) {
 				try (ResultSet rs1 = sourceGroup
 						.executeQuery("SELECT DISTINCT sourceFile FROM filesdata")) {

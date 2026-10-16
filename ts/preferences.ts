@@ -105,6 +105,13 @@ export interface Preferences {
         model: string;
         fixTags: boolean;
     };
+    ollama: {
+        enabled: boolean;
+        url: string;
+        model: string;
+        fixTags: boolean;
+        think: boolean;
+    };
     spellchecker: {
         defaultEnglish: string;
         defaultPortuguese: string;

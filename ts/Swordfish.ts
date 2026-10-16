@@ -13,10 +13,11 @@
 import { BrowserWindow, ClientRequest, IncomingMessage, IpcMainEvent, Menu, MenuItem, MessageBoxOptions, MessageBoxReturnValue, Notification, OpenDialogReturnValue, Rectangle, SaveDialogReturnValue, Size, app, clipboard, dialog, ipcMain, nativeTheme, net, screen, session, shell } from "electron";
 import { AnthropicTranslator, ChatGPTTranslator, GeminiTranslator, MTUtils, MistralTranslator } from "mtengines";
 import { ChildProcessWithoutNullStreams, execFileSync, spawn } from "node:child_process";
-import { appendFileSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
-import * as nodeHttp from "node:http";
+import { appendFileSync, copyFileSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { userInfo } from "node:os";
-import { join, dirname } from "node:path";
+import * as nodeHttp from "node:http";
+import { basename, dirname, join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { TMReader, TMReaderResult } from "sdltm";
 import { LanguageUtils } from "typesbcp47";
 import { XMLElement } from "typesxml";
@@ -183,6 +184,13 @@ export class Swordfish {
             apiKey: '',
             model: 'deepseek-v4-pro',
             fixTags: false
+        },
+        ollama: {
+            enabled: false,
+            url: 'http://localhost:11434',
+            model: '',
+            fixTags: false,
+            think: false
         },
         modernmt: {
             enabled: false,
@@ -692,14 +700,14 @@ export class Swordfish {
 
         const agentJar = process.env.SWORDFISH_AGENT_JAR;
         const agentArgs = agentJar ? ['--upgrade-module-path', agentJar] : [];
-        this.ls = spawn(this.javapath, [...agentArgs, '--module-path', 'lib', '-m', 'swordfish/com.maxprograms.swordfish.TmsServer', '-port', '8070'], { cwd: app.getAppPath(), windowsHide: true });
+        this.ls = spawn(this.javapath, [...agentArgs, '-XX:+UseCompactObjectHeaders', '--enable-native-access=mapdb,org.xerial.sqlitejdbc', '--module-path', 'lib', '-m', 'swordfish/com.maxprograms.swordfish.TmsServer', '-port', '8070'], { cwd: app.getAppPath(), windowsHide: true });
         this.ls.stdout.on('data', (data) => {
             console.log(`stdout: ${data}`);
         });
         this.ls.stderr.on('data', (data) => {
             console.error(`stderr: ${data}`);
         });
-        execFileSync(this.javapath, ['--module-path', 'lib', '-m', 'swordfish/com.maxprograms.swordfish.CheckURL', 'http://localhost:8070/TMSServer'], { cwd: app.getAppPath(), windowsHide: true });
+        execFileSync(this.javapath, ['-XX:+UseCompactObjectHeaders', '--module-path', 'lib', '-m', 'swordfish/com.maxprograms.swordfish.CheckURL', 'http://localhost:8070/TMSServer'], { cwd: app.getAppPath(), windowsHide: true });
 
         this.loadDefaults();
         Swordfish.locations = new Locations(join(app.getPath('appData'), app.name, 'locations.json'));
@@ -730,10 +738,6 @@ export class Swordfish {
                 event.preventDefault();
                 this.stopServer();
             }
-        });
-
-        app.on('quit', () => {
-            app.quit();
         });
 
         app.on('window-all-closed', () => {
@@ -842,8 +846,11 @@ export class Swordfish {
             Swordfish.mainWindow.focus();
             Swordfish.mainWindow.webContents.send('open-segment', seg);
         });
-        ipcMain.on('go-to-same-source', (event: IpcMainEvent, currentSegment: FullId) => {
-            Swordfish.goToSameSource(currentSegment);
+        ipcMain.on('previous-same-source', (event: IpcMainEvent, currentSegment: FullId) => {
+            Swordfish.previousSameSource(currentSegment);
+        });
+        ipcMain.on('next-same-source', (event: IpcMainEvent, currentSegment: FullId) => {
+            Swordfish.nextSameSource(currentSegment);
         });
         ipcMain.on('get-project-param', (event: IpcMainEvent) => {
             Swordfish.projectParam ? event.sender.send('set-project', Swordfish.projectParam) : event.preventDefault();
@@ -1478,7 +1485,7 @@ export class Swordfish {
         ipcMain.on('close-change-case', () => {
             Swordfish.changeCaseWindow.close();
         });
-        ipcMain.on('change-case-to', (event: IpcMainEvent, arg: any) => {
+        ipcMain.on('change-case-to', (event: IpcMainEvent, arg: string) => {
             Swordfish.changeCaseTo(arg);
         });
         ipcMain.on('split-at', (event: IpcMainEvent, arg: any) => {
@@ -1588,7 +1595,6 @@ export class Swordfish {
             Swordfish.XSLTransformationWindow.close();
         });
         ipcMain.on('XSLTransform', (event: IpcMainEvent, arg: { xmlFile: string, xslFile: string, outputFile: string, openResult: boolean }) => {
-            console.log(JSON.stringify(arg));
             Swordfish.XSLTransformation(arg);
         });
         ipcMain.on('close-getting-started', () => {
@@ -1756,6 +1762,7 @@ export class Swordfish {
             { label: 'Edit Previous Segment', accelerator: 'PageUp', click: () => { Swordfish.mainWindow.webContents.send('previous-segment'); } },
             { label: 'Edit Next Segment', accelerator: 'PageDown', click: () => { Swordfish.mainWindow.webContents.send('next-segment'); } },
             { label: 'Go To Segment...', accelerator: 'CmdOrCtrl+G', click: () => { Swordfish.mainWindow.webContents.send('go-to'); }, icon: join(app.getAppPath(), 'images', iconFolder, 'goTo.png') },
+            { label: 'Go To Previous Segment With Same Source ', accelerator: 'CmdOrCtrl+Alt+G', click: () => { Swordfish.mainWindow.webContents.send('previous-same-source'); }, icon: join(app.getAppPath(), 'images', iconFolder, 'previousSource.png') },
             { label: 'Go To Next Segment With Same Source ', accelerator: 'CmdOrCtrl+Shift+G', click: () => { Swordfish.mainWindow.webContents.send('next-same-source'); }, icon: join(app.getAppPath(), 'images', iconFolder, 'goToSource.png') },
             new MenuItem({ type: 'separator' }),
             { label: 'Edit Source Text', accelerator: 'Alt+F2', click: () => { Swordfish.mainWindow.webContents.send('edit-source'); } },
@@ -1913,7 +1920,7 @@ export class Swordfish {
             { label: 'Merge With Next Segment', accelerator: 'CmdOrCtrl+J', click: () => { Swordfish.mainWindow.webContents.send('merge-next'); }, icon: join(app.getAppPath(), 'images', iconFolder, 'merge.png') },
             new MenuItem({ type: 'separator' }),
             { label: 'Copy Source to Target', accelerator: 'CmdOrCtrl+P', click: () => { Swordfish.mainWindow.webContents.send('copy-source'); } },
-            { label: 'Copy Sources to All Empty Targets', accelerator: 'CmdOrCtrl+Shift+P', click: () => { Swordfish.mainWindow.webContents.send('copy-all-sources'); } },
+            { label: 'Copy Sources to All Empty Targets', accelerator: 'CmdOrCtrl+Alt+P', click: () => { Swordfish.mainWindow.webContents.send('copy-all-sources'); } },
             { label: 'Pseudo-translate Untranslated Segments', click: () => { Swordfish.mainWindow.webContents.send('pseudo-translate'); } },
             new MenuItem({ type: 'separator' }),
             { label: 'XSL Transformation', click: () => { Swordfish.showXSLTransformation(); } }
@@ -2047,16 +2054,14 @@ export class Swordfish {
     stopServer(): void {
         let instance: Swordfish = this;
         Swordfish.sendRequest('/', { command: 'stop' },
-            (data: any) => {
-                if (data.status === 'OK') {
-                    instance.ls.kill();
-                    app.quit();
-                } else {
-                    Swordfish.showMessage({ type: 'error', message: data.reason });
-                }
+            () => {
+                instance.ls.kill();
+                app.quit();
             },
-            (reason: string) => {
-                Swordfish.showMessage({ type: 'error', message: reason });
+            () => {
+                // Java is already gone — kill the process and quit anyway
+                instance.ls.kill();
+                app.quit();
             }
         );
     }
@@ -2285,6 +2290,10 @@ export class Swordfish {
                 }
                 if (!json.hasOwnProperty('gemini')) {
                     json.gemini = { enabled: false, apiKey: '', model: 'gemini-2.5-flash', fixTags: false };
+                    needsSaving = true;
+                }
+                if (!json.hasOwnProperty('ollama')) {
+                    json.ollama = { enabled: false, url: 'http://localhost:11434', model: '', fixTags: false, think: false };
                     needsSaving = true;
                 }
                 if (!json.hasOwnProperty('appLang')) {
@@ -2688,14 +2697,7 @@ export class Swordfish {
                             buttons: ['Yes', 'No']
                         }).then((selection: MessageBoxReturnValue) => {
                             if (selection.response === 0) {
-                                shell.openExternal('file://' + output).catch(() => {
-                                    shell.openPath(output).catch((reason: any) => {
-                                        if (reason instanceof Error) {
-                                            console.error(reason.message);
-                                        }
-                                        this.showMessage({ type: 'error', message: 'Unable to open translated file.' });
-                                    });
-                                });
+                                Swordfish.openFile(output, 'Unable to open translated file.');
                             }
                         });
                     } else {
@@ -2743,9 +2745,9 @@ export class Swordfish {
     }
 
     static addFile(): void {
-        let extensions: string[] = ['inx', 'icml', 'idml', 'ditamap', 'dita', 'xml', 'html', 'htm', 'js', 'properties', 'json', 'mif', 'docx', 'xlsx', 'pptx',
-            'sxw', 'sxc', 'sxi', 'sxd', 'odt', 'ods', 'odp', 'odg', 'txt', 'po', 'pot', 'rc', 'resx', 'sdlxliff', 'srt', 'svg', 'sdlppx', 'ts', 'txml', 'vsdx',
-            'xlf', 'xliff', 'mqxliff', 'txlf'];
+        let extensions: string[] = ['inx', 'icml', 'idml', 'ditamap', 'dita', 'xml', 'html', 'htm', 'js', 'properties',
+            'json', 'md', 'mif', 'docx', 'xlsx', 'pptx', 'sxw', 'sxc', 'sxi', 'sxd', 'odt', 'ods', 'odp', 'odg', 'txt',
+            'po', 'pot', 'rc', 'resx', 'sdlxliff', 'srt', 'svg', 'sdlppx', 'ts', 'txml', 'vtt', 'vsdx', 'xlf', 'xliff', 'mqxliff', 'txlf'];
         let filters: any[] = [
             { name: 'Supported Files', extensions: extensions },
             { name: 'Any File', extensions: ['*'] }
@@ -2941,7 +2943,7 @@ export class Swordfish {
     }
 
     selectSourceFiles(event: IpcMainEvent): void {
-        let extensions: string[] = ['inx', 'icml', 'idml', 'ditamap', 'dita', 'xml', 'html', 'htm', 'js', 'properties', 'json', 'mif', 'docx', 'xlsx', 'pptx',
+        let extensions: string[] = ['inx', 'icml', 'idml', 'ditamap', 'dita', 'xml', 'html', 'htm', 'js', 'properties', 'json', 'md', 'mif', 'docx', 'xlsx', 'pptx',
             'sxw', 'sxc', 'sxi', 'sxd', 'odt', 'ods', 'odp', 'odg', 'txt', 'po', 'pot', 'rc', 'resx', 'sdlxliff', 'srt', 'svg', 'sdlppx', 'ts', 'txml', 'vsdx',
             'xlf', 'xliff', 'mqxliff', 'txlf'];
         let filters: any[] = [
@@ -3162,7 +3164,7 @@ export class Swordfish {
         Swordfish.mainWindow.webContents.send('view-glossaries');
     }
 
-    static sendRequest(url: string, params: any, success: Function, error: Function): void {
+    static sendRequest(url: string, params: any, success: (data: any) => void, error: (reason: string) => void): void {
         let body: string = JSON.stringify(params);
         let req = nodeHttp.request({
             hostname: '127.0.0.1',
@@ -3175,8 +3177,11 @@ export class Swordfish {
                 'Content-Length': Buffer.byteLength(body)
             }
         }, (res) => {
+            res.setEncoding('utf8');
+            res.on('error', (e: Error) => error(e.message));
+            res.on('aborted', () => error('Request aborted'));
             let responseData: string = '';
-            res.on('data', (chunk: Buffer) => { responseData += chunk.toString(); });
+            res.on('data', (chunk: string) => { responseData += chunk; });
             res.on('end', () => {
                 try {
                     let json: any = JSON.parse(responseData);
@@ -3192,13 +3197,28 @@ export class Swordfish {
     }
 
     static showHelp(): void {
-        const path = join(app.getAppPath(), 'swordfish_' + Swordfish.currentPreferences.appLang + '.pdf');
+        let path = join(app.getAppPath(), 'swordfish_' + Swordfish.currentPreferences.appLang + '.pdf');
+        if (process.platform === 'linux' && path.startsWith('/opt')) {
+            let tempFolder: string = join(app.getPath('home'), 'tmp', 'swordfish');
+            if (!existsSync(tempFolder)) {
+                mkdirSync(tempFolder, { recursive: true });
+            }
+            let tempFile: string = join(tempFolder, basename(path));
+            try {
+                copyFileSync(path, tempFile);
+                path = tempFile;
+            } catch (error) {
+                console.error('Error copying file:', error);
+                Swordfish.showMessage({ type: 'error', message: 'Unable to open Swordfish User Guide.' });
+                return;
+            }
+        }
         shell.openExternal('file://' + path).catch(() => {
             shell.openPath(path).catch((reason: any) => {
                 if (reason instanceof Error) {
                     console.error(reason.message);
                 }
-                this.showMessage({ type: 'error', message: 'Unable to open Swordfish User Guide.' });
+                Swordfish.showMessage({ type: 'error', message: 'Unable to open Swordfish User Guide.' });
             });
         });
     }
@@ -3234,6 +3254,9 @@ export class Swordfish {
         let title: string = '';
         switch (type) {
             case 'Swordfish':
+                licenseFile = 'Swordfish.txt';
+                title = 'Swordfish License';
+                break;
             case "OpenXLIFF":
             case "MTEngines":
             case "TypesBCP47":
@@ -3409,7 +3432,7 @@ export class Swordfish {
             if (reason instanceof Error) {
                 console.error(reason.message);
             }
-            this.showMessage({ type: 'error', message: 'Unable to open release history.' });
+            Swordfish.showMessage({ type: 'error', message: 'Unable to open release history.' });
         });
     }
 
@@ -3418,7 +3441,41 @@ export class Swordfish {
             if (reason instanceof Error) {
                 console.error(reason.message);
             }
-            this.showMessage({ type: 'error', message: 'Unable to open support group page.' });
+            Swordfish.showMessage({ type: 'error', message: 'Unable to open support group page.' });
+        });
+    }
+
+    static openFile(path: string, message: string): void {
+        if (process.platform === 'linux') {
+            let segments: string[] = path.split('/').filter((segment: string) => {
+                return segment.length > 0;
+            });
+            let isHidden: boolean = segments.some((segment: string) => {
+                return segment.startsWith('.');
+            });
+            if (isHidden) {
+                let tempFolder: string = join(app.getPath('home'), 'tmp', 'swordfish');
+                if (!existsSync(tempFolder)) {
+                    mkdirSync(tempFolder, { recursive: true });
+                }
+                let tempFile: string = join(tempFolder, basename(path));
+                try {
+                    copyFileSync(path, tempFile);
+                    path = tempFile;
+                } catch (error) {
+                    console.error('Error copying file:', error);
+                    Swordfish.showMessage({ type: 'error', message: message });
+                    return;
+                }
+            }
+        }
+        shell.openExternal(pathToFileURL(path).href).catch(() => {
+            shell.openPath(path).catch((reason: any) => {
+                if (reason instanceof Error) {
+                    console.error(reason.message);
+                }
+                Swordfish.showMessage({ type: 'error', message: message });
+            });
         });
     }
 
@@ -4101,7 +4158,7 @@ export class Swordfish {
         dialog.showOpenDialog({
             properties: ['openFile'],
             filters: [
-                { name: 'TMX/TBX File', extensions: ['tmx', 'tbx'] },
+                { name: 'TMX/TBX/GlossML File', extensions: ['tmx', 'tbx', 'gls'] },
                 { name: 'Any File', extensions: ['*'] }
             ]
         }).then((value: OpenDialogReturnValue) => {
@@ -4336,7 +4393,8 @@ export class Swordfish {
                         spaceErrors: data.spaceErrors,
                         hasNotes: data.hasNotes,
                         hasContext: data.hasContext,
-                        hasMetadata: data.hasMetadata
+                        hasMetadata: data.hasMetadata,
+                        repeated: data.repeated
                     });
                 } else {
                     Swordfish.mainWindow.webContents.send('clear-errors', {
@@ -4348,7 +4406,8 @@ export class Swordfish {
                         spaceErrors: data.spaceErrors,
                         hasNotes: data.hasNotes,
                         hasContext: data.hasContext,
-                        hasMetadata: data.hasMetadata
+                        hasMetadata: data.hasMetadata,
+                        repeated: data.repeated
                     });
                 }
                 Swordfish.mainWindow.webContents.send('set-statistics', { project: arg.project, statistics: data.statistics });
@@ -4852,16 +4911,7 @@ export class Swordfish {
             let header: string = 'Machine translation errors - ' + new Date().toLocaleString();
             let content: string = [header, '', ...logEntries].join('\n');
             writeFileSync(filePath, content, { encoding: 'utf8' });
-            shell.openExternal('file://' + filePath).catch(() => {
-                shell.openPath(filePath).catch((reason: any) => {
-                    if (reason instanceof Error) {
-                        console.error(reason.message);
-                    } else {
-                        console.error(reason);
-                    }
-                    Swordfish.showMessage({ type: 'error', message: 'Unable to open MT error log.' });
-                });
-            });
+            Swordfish.openFile(filePath, 'Unable to open MT error log.');
         } catch (error: any) {
             if (error instanceof Error) {
                 console.error(error.message);
@@ -5600,14 +5650,7 @@ export class Swordfish {
                     Swordfish.showMessage({ type: 'error', message: data.reason });
                     return;
                 }
-                shell.openExternal('file://' + data.analysis).catch(() => {
-                    shell.openPath(data.analysis).catch((reason: any) => {
-                        if (reason instanceof Error) {
-                            console.error(reason.message);
-                        }
-                        this.showMessage({ type: 'error', message: 'Unable to open statistics.' });
-                    });
-                });
+                Swordfish.openFile(data.analysis, 'Unable to open statistics.');
             },
             (reason: string) => {
                 Swordfish.mainWindow.webContents.send('end-waiting');
@@ -5649,8 +5692,24 @@ export class Swordfish {
         Swordfish.setLocation(this.tagsWindow, 'tags.html');
     }
 
-    static goToSameSource(currentSegment: FullId): void {
-        Swordfish.sendRequest('/projects/getSameSource', { project: currentSegment.project, file: currentSegment.file, unit: currentSegment.unit, segment: currentSegment.segment }, (data: any) => {
+    static previousSameSource(currentSegment: FullId): void {
+        Swordfish.sendRequest('/projects/previousSameSource', { project: currentSegment.project, file: currentSegment.file, unit: currentSegment.unit, segment: currentSegment.segment }, (data: any) => {
+            if (data.status === Swordfish.SUCCESS) {
+                if (data.previous !== -1) {
+                    Swordfish.mainWindow.webContents.send('open-segment', data.previous);
+                } else {
+                    Swordfish.showMessage({ type: 'info', message: 'No more segments with the same source' });
+                }
+            } else {
+                Swordfish.showMessage({ type: 'error', message: data.reason });
+            }
+        }, (reason: string) => {
+            Swordfish.showMessage({ type: 'error', message: reason });
+        });
+    }
+
+    static nextSameSource(currentSegment: FullId): void {
+        Swordfish.sendRequest('/projects/nextSameSource', { project: currentSegment.project, file: currentSegment.file, unit: currentSegment.unit, segment: currentSegment.segment }, (data: any) => {
             if (data.status === Swordfish.SUCCESS) {
                 if (data.next !== -1) {
                     Swordfish.mainWindow.webContents.send('open-segment', data.next);
@@ -6546,26 +6605,32 @@ export class Swordfish {
     }
 
     static insertAiResponse(): void {
-        let clipboardText: string = clipboard.readText();
-        try {
-            let target: XMLElement = MTUtils.toXMLElement(clipboardText);
-            if (target.getName() === 'target') {
-                this.mainWindow.webContents.send('insert-ai-response', target.toString());
-            } else {
-                Swordfish.showMessage({ type: 'error', message: 'Invalid AI response: ' + clipboardText });
-                return;
+        clipboard.readText().then((clipboardText: string) => {
+            try {
+                let target: XMLElement = MTUtils.toXMLElement(clipboardText);
+                if (target.getName() === 'target') {
+                    this.mainWindow.webContents.send('insert-ai-response', target.toString());
+                } else {
+                    Swordfish.showMessage({ type: 'error', message: 'Invalid AI response: ' + clipboardText });
+                    return;
+                }
+            } catch (e: unknown) {
+                if (e instanceof Error) {
+                    Swordfish.showMessage({ type: 'error', message: 'Invalid AI response: ' + clipboardText });
+                    return;
+                }
             }
-        } catch (e) {
-            if (e instanceof Error) {
-                Swordfish.showMessage({ type: 'error', message: 'Invalid AI response: ' + clipboardText });
-                return;
-            }
-        }
+        }).catch((error: any) => {
+            Swordfish.showMessage({ type: 'error', message: 'Failed to read clipboard: ' + error });
+        });
     }
 
     static insertResponse(aiResponse: any): void {
         Swordfish.sendRequest('/projects/setTarget', aiResponse,
             (data: any) => {
+                data.file = aiResponse.file;
+                data.unit = aiResponse.unit;
+                data.segment = aiResponse.segment;
                 if (data.status === Swordfish.SUCCESS) {
                     Swordfish.mainWindow.webContents.send('set-target', data);
                 } else {
@@ -6579,11 +6644,19 @@ export class Swordfish {
     }
 
     static fixTags(args: any): void {
-        if (!(Swordfish.currentPreferences.chatGpt.enabled || Swordfish.currentPreferences.anthropic.enabled || Swordfish.currentPreferences.mistral.enabled)) {
+        const aiEnabled: boolean = Swordfish.currentPreferences.chatGpt.enabled || Swordfish.currentPreferences.anthropic.enabled
+            || Swordfish.currentPreferences.mistral.enabled || Swordfish.currentPreferences.qwen.enabled
+            || Swordfish.currentPreferences.gemini.enabled || Swordfish.currentPreferences.ollama.enabled
+            || Swordfish.currentPreferences.glm.enabled || Swordfish.currentPreferences.doubao.enabled || Swordfish.currentPreferences.deepseek.enabled;
+        if (!aiEnabled) {
             Swordfish.showMessage({ type: 'error', message: 'No AI engine is currently enabled' });
             return;
         }
-        if (!(Swordfish.currentPreferences.chatGpt.fixTags || Swordfish.currentPreferences.anthropic.fixTags || Swordfish.currentPreferences.mistral.fixTags)) {
+        const aiFixTagsEnabled: boolean = Swordfish.currentPreferences.chatGpt.fixTags || Swordfish.currentPreferences.anthropic.fixTags
+            || Swordfish.currentPreferences.mistral.fixTags || Swordfish.currentPreferences.qwen.fixTags
+            || Swordfish.currentPreferences.gemini.fixTags || Swordfish.currentPreferences.ollama.fixTags
+            || Swordfish.currentPreferences.glm.fixTags || Swordfish.currentPreferences.doubao.fixTags || Swordfish.currentPreferences.deepseek.fixTags;
+        if (!aiFixTagsEnabled) {
             Swordfish.showMessage({ type: 'error', message: 'No AI engine is currently configured to fix tags' });
             return;
         }
@@ -8742,7 +8815,11 @@ export class Swordfish {
     }
 
     static fixMatch(match: Match): void {
-        if (!(Swordfish.currentPreferences.chatGpt.enabled || Swordfish.currentPreferences.anthropic.enabled || Swordfish.currentPreferences.mistral.enabled)) {
+        const aiEnabled: boolean = Swordfish.currentPreferences.chatGpt.enabled || Swordfish.currentPreferences.anthropic.enabled
+            || Swordfish.currentPreferences.mistral.enabled || Swordfish.currentPreferences.qwen.enabled
+            || Swordfish.currentPreferences.gemini.enabled || Swordfish.currentPreferences.ollama.enabled
+            || Swordfish.currentPreferences.glm.enabled || Swordfish.currentPreferences.doubao.enabled || Swordfish.currentPreferences.deepseek.enabled;
+        if (!aiEnabled) {
             Swordfish.showMessage({ type: 'error', message: 'No AI engine is currently enabled' });
             return;
         }
@@ -8777,14 +8854,7 @@ export class Swordfish {
                     Swordfish.showMessage({ type: 'error', message: data.reason });
                     return;
                 }
-                shell.openExternal('file://' + data.export).catch(() => {
-                    shell.openPath(data.export).catch((reason: any) => {
-                        if (reason instanceof Error) {
-                            console.error(reason.message);
-                        }
-                        this.showMessage({ type: 'error', message: 'Unable to open HTML.' });
-                    });
-                });
+                Swordfish.openFile(data.export, 'Unable to open HTML.');
             },
             (reason: string) => {
                 Swordfish.mainWindow.webContents.send('end-waiting');
@@ -8826,7 +8896,7 @@ export class Swordfish {
         Swordfish.setLocation(this.changeCaseWindow, 'changeCase.html');
     }
 
-    static changeCaseTo(arg: any): void {
+    static changeCaseTo(arg: string): void {
         Swordfish.mainWindow.webContents.send('case-changed', arg);
         this.changeCaseWindow.close();
     }
@@ -9665,7 +9735,7 @@ export class Swordfish {
                     (data: any) => {
                         if (data.status === 'Success') {
                             Swordfish.getXMLFilters(event);
-                            this.showMessage({ type: 'info', message: 'Configuration file imported', parent: 'preferences' });
+                            Swordfish.showMessage({ type: 'info', message: 'Configuration file imported', parent: 'preferences' });
                         } else {
                             Swordfish.showMessage({ type: 'error', message: data.reason, parent: 'preferences' });
                         }
@@ -9714,7 +9784,7 @@ export class Swordfish {
                 Swordfish.sendRequest('/services/exportFilters', { path: app.getAppPath(), files: arg.files, folder: value.filePaths[0] },
                     (data: any) => {
                         if (data.status === 'Success') {
-                            this.showMessage({ type: 'info', message: 'Configuration files exported', parent: 'preferences' });
+                            Swordfish.showMessage({ type: 'info', message: 'Configuration files exported', parent: 'preferences' });
                         } else {
                             Swordfish.showMessage({ type: 'error', message: data.reason, parent: 'preferences' });
                         }

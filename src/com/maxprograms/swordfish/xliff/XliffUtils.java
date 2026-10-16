@@ -389,7 +389,7 @@ public class XliffUtils {
 				throw new IOException(NOTSHARED);
 			}
 			return projectId;
-		} catch (SAXException | ParserConfigurationException e) {
+		} catch (SAXException | ParserConfigurationException _) {
 			throw new IOException(NOTXLIFF);
 		}
 	}
@@ -481,7 +481,7 @@ public class XliffUtils {
 			result.put("targetLang", xliff.getAttributeValue("trgLang"));
 			result.put("files", filesArray);
 			return result;
-		} catch (SAXException | ParserConfigurationException e) {
+		} catch (SAXException | ParserConfigurationException _) {
 			throw new IOException(NOTXLIFF);
 		}
 	}
@@ -616,9 +616,112 @@ public class XliffUtils {
 					}
 				}
 			}
-		} catch (Exception e) {
+		} catch (Exception _) {
 			// do nothing
 		}
 		return false;
+	}
+
+	public static boolean isCurrentOpenXliff(String fileName) {
+		try {
+			SAXBuilder builder = new SAXBuilder();
+			Document doc = builder.build(new File(fileName));
+			Element root = doc.getRootElement();
+			if (!"xliff".equals(root.getName()) || root.getAttributeValue("version") == null
+					|| !root.getAttributeValue("version").startsWith("2.")) {
+				return false;
+			}
+			Element file = root.getChild("file");
+			if (file == null) {
+				return false;
+			}
+			Element metadata = file.getChild("mda:metadata");
+			if (metadata == null) {
+				return false;
+			}
+			String toolId = "";
+			String toolVersion = "";
+			for (Element group : metadata.getChildren("mda:metaGroup")) {
+				if ("tool".equals(group.getAttributeValue("category"))) {
+					for (Element meta : group.getChildren("mda:meta")) {
+						if ("tool-id".equals(meta.getAttributeValue("type"))) {
+							toolId = meta.getText();
+						}
+						if ("tool-version".equals(meta.getAttributeValue("type"))) {
+							toolVersion = meta.getText();
+						}
+					}
+				}
+			}
+			return com.maxprograms.converters.Constants.TOOLID.equals(toolId)
+					&& compareVersions(toolVersion, com.maxprograms.converters.Constants.VERSION) >= 0;
+		} catch (Exception _) {
+			return false;
+		}
+	}
+
+	private static int compareVersions(String a, String b) {
+		String[] partsA = a.trim().split("\\s+")[0].split("\\.");
+		String[] partsB = b.trim().split("\\s+")[0].split("\\.");
+		for (int i = 0; i < Math.max(partsA.length, partsB.length); i++) {
+			int numA = i < partsA.length ? parseIntSafe(partsA[i]) : 0;
+			int numB = i < partsB.length ? parseIntSafe(partsB[i]) : 0;
+			if (numA != numB) {
+				return Integer.compare(numA, numB);
+			}
+		}
+		return 0;
+	}
+
+	private static int parseIntSafe(String value) {
+		try {
+			return Integer.parseInt(value);
+		} catch (NumberFormatException e) {
+			return 0;
+		}
+	}
+
+	public static Element normalizeSpaces(Element source) {
+		List<XMLNode> content = source.getContent();
+		int first = -1;
+		int last = -1;
+		for (int i = 0; i < content.size(); i++) {
+			XMLNode node = content.get(i);
+			if (node.getNodeType() == XMLNode.TEXT_NODE) {
+				if (first == -1) {
+					first = i;
+				}
+				last = i;
+				String text = ((TextNode) node).getText();
+				text = text.replace("\n", " ");
+				text = text.replace("\t", " ");
+				text = text.replace("\r", " ");
+				while (text.contains("  ")) {
+					text = text.replace("  ", " ");
+				}
+				node = new TextNode(text);
+				content.set(i, node);
+			}
+		}
+		if (first != -1 && first == 0) {
+			XMLNode node = content.get(first);
+			String text = ((TextNode) node).getText().trim();
+			if (text.isEmpty()) {
+				node = new TextNode("");
+				content.set(first, node);
+			}
+		}
+		if (last != -1 && last == content.size() - 1) {
+			XMLNode node = content.get(last);
+			String text = ((TextNode) node).getText().trim();
+			if (text.isEmpty()) {
+				node = new TextNode("");
+				content.set(last, node);
+			}
+		}
+		Element result = new Element(source.getName());
+		result.setAttributes(source.getAttributes());
+		result.setContent(content);
+		return result;
 	}
 }

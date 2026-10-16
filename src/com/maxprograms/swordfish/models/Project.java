@@ -118,7 +118,7 @@ public class Project implements Comparable<Project> {
 			filesArray.put(it.next().toJSON());
 		}
 		json.put("files", filesArray);
-		json.put("xliff", Utils.getRelativePath(ProjectsHandler.getWorkFolder().getAbsolutePath(), xliff));
+		json.put("xliff", Utils.getRelativePath(ProjectsHandler.getWorkFolder().getCanonicalPath(), new File(xliff).getCanonicalPath()));
 		json.put("memory", memory);
 		json.put("glossary", glossary);
 		json.put("review", review);

@@ -1,10 +1,11 @@
 #!/usr/bin/env node
-import { readdir, mkdir, cp } from 'node:fs/promises';
+import { readdir, mkdir, cp, rm } from 'node:fs/promises';
 import { resolve, join, delimiter } from 'node:path';
 import { spawnSync, spawn } from 'node:child_process';
 const root = resolve(import.meta.dirname, '..');
 const output = join(root, '.agent-build');
 const classes = join(output, 'classes');
+await rm(classes, { recursive: true, force: true });
 await mkdir(classes, { recursive: true });
 const files = await readdir(join(root, 'src'), { recursive: true });
 const sources = files.filter(f => f.endsWith('.java')).map(f => join(root, 'src', f));
@@ -15,7 +16,7 @@ function run(command, args) {
     if (result.error) throw result.error;
     if (result.status !== 0) throw new Error(`${command} failed: ${result.status}`);
 }
-run('javac', ['--release', '21', '--module-path', jars, '-d', classes, ...sources]);
+run('javac', ['--release', '25', '--module-path', jars, '-d', classes, ...sources]);
 await cp(join(root, 'src'), classes, { recursive: true, filter: src => !src.endsWith('.java') });
 const jar = join(output, 'swordfish.jar');
 run('jar', ['--create', '--file', jar, '-C', classes, '.']);

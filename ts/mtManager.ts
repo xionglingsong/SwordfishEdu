@@ -10,7 +10,7 @@
  *     Maxprograms - initial API and implementation
  *******************************************************************************/
 
-import { AnthropicTranslator, AzureTranslator, ChatGPTTranslator, DeepLTranslator, GeminiTranslator, GoogleTranslator, MTEngine, MTMatch, MTUtils, MistralTranslator, ModernMTTranslator, QwenTranslator } from "mtengines";
+import { AnthropicTranslator, AzureTranslator, ChatGPTTranslator, DeepLTranslator, GeminiTranslator, GoogleTranslator, MTEngine, MTMatch, MTUtils, MistralTranslator, ModernMTTranslator, OllamaTranslator, QwenTranslator } from "mtengines";
 import { GlmTranslator } from "./GlmTranslator.js";
 import { DoubaoTranslator } from "./DoubaoTranslator.js";
 import { DeepSeekTranslator } from "./DeepSeekTranslator.js";
@@ -234,6 +234,15 @@ export class MTManager {
             this.mtEngines.push(deepseekTranslator);
             if (preferences.deepseek.fixTags) {
                 this.tagFixer = deepseekTranslator;
+            }
+        }
+        if (preferences.ollama.enabled) {
+            let ollamaTranslator: OllamaTranslator = new OllamaTranslator(preferences.ollama.url, preferences.ollama.model, preferences.ollama.think);
+            ollamaTranslator.setSourceLanguage(srcLang);
+            ollamaTranslator.setTargetLanguage(tgtLang);
+            this.mtEngines.push(ollamaTranslator);
+            if (preferences.ollama.fixTags) {
+                this.tagFixer = ollamaTranslator;
             }
         }
     }
